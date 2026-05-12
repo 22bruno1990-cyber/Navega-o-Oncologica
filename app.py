@@ -433,14 +433,34 @@ input::placeholder {
     fill: #0f4c5c !important;
 }
 
-.stButton button, .stForm button[kind="secondaryFormSubmit"] {
-    background: #0f3d4c !important;
-    color: #ffffff !important;
-    border: 1px solid #0f3d4c !important;
+.stButton button:not([kind="tertiary"]),
+.stForm button:not([kind="tertiary"]),
+.stForm [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #ffffff 0%, #eef8fc 100%) !important;
+    color: #0f3d4c !important;
+    border: 1px solid rgba(15, 61, 76, 0.22) !important;
+    box-shadow: 0 10px 20px rgba(15, 61, 76, 0.10) !important;
+    font-weight: 800 !important;
 }
 
-.stButton button p, .stButton button span {
-    color: #ffffff !important;
+.stButton button:not([kind="tertiary"]):hover,
+.stButton button:not([kind="tertiary"]):focus,
+.stForm button:not([kind="tertiary"]):hover,
+.stForm button:not([kind="tertiary"]):focus,
+.stForm [data-testid="stFormSubmitButton"] button:hover,
+.stForm [data-testid="stFormSubmitButton"] button:focus {
+    background: linear-gradient(135deg, #ffffff 0%, #e2f1f8 100%) !important;
+    color: #0f3d4c !important;
+    border: 1px solid rgba(15, 61, 76, 0.28) !important;
+}
+
+.stButton button:not([kind="tertiary"]) p,
+.stButton button:not([kind="tertiary"]) span,
+.stForm button:not([kind="tertiary"]) p,
+.stForm button:not([kind="tertiary"]) span,
+.stForm [data-testid="stFormSubmitButton"] button p,
+.stForm [data-testid="stFormSubmitButton"] button span {
+    color: #0f3d4c !important;
 }
 
 [data-testid="stButton"] button[kind="tertiary"] {
