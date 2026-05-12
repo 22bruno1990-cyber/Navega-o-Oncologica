@@ -212,6 +212,7 @@ html, body, [class*="css"] {
 .metric-b { background: linear-gradient(135deg, #6b3f1d 0%, #d97706 100%); }
 .metric-c { background: linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%); }
 .metric-d { background: linear-gradient(135deg, #1d4d4f 0%, #2a9d8f 100%); }
+.metric-protocol { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #60a5fa 100%); }
 
 .metric-label {
     text-transform: uppercase;
@@ -260,6 +261,47 @@ html, body, [class*="css"] {
 .flag-amber { background: #fef3c7; color: #92400e; }
 .flag-green { background: #dcfce7; color: #166534; }
 .flag-blue { background: #dbeafe; color: #1d4ed8; }
+.flag-protocol-strong { background: #dbeafe; color: #1d4ed8; }
+.flag-protocol-soft { background: #e0e7ff; color: #3730a3; }
+
+.section-chip {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.section-chip-operational {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.section-chip-protocol {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.protocol-card {
+    background: linear-gradient(180deg, rgba(239, 246, 255, 0.94) 0%, rgba(219, 234, 254, 0.88) 100%);
+    border: 1px solid rgba(37, 99, 235, 0.14);
+    border-left: 4px solid #2563eb;
+    border-radius: 16px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+
+.protocol-card-title {
+    font-weight: 800;
+    color: #123847;
+}
+
+.protocol-card-copy {
+    color: #31556a;
+    font-size: 0.92rem;
+    margin-top: 4px;
+}
 
 .calendar-grid {
     display: grid;
@@ -942,14 +984,14 @@ def evaluate_protocol_alert(row: pd.Series) -> tuple[str, str, int]:
     if prescription_status in {"prescribed", "sent_to_insurance"}:
         return "Próximo ciclo já encaminhado", "flag-green", 0
     if delta < 0:
-        return "Próximo ciclo já venceu a janela de protocolo", "flag-red", 3
+        return f"Janela de {alert_days} dias já venceu para solicitar o próximo ciclo", "flag-protocol-strong", 3
     if delta <= alert_days:
         if delta == 0:
-            message = "Janela de protocolo vence hoje"
+            message = f"Janela de {alert_days} dias vence hoje"
         else:
-            message = f"Faltam {delta} dia(s) para abrir o próximo ciclo"
+            message = f"Faltam {delta} dia(s) para o próximo ciclo. Solicitar nova prescrição."
         severity = 3 if prescription_status == "not_requested" else 2
-        css_class = "flag-red" if severity == 3 else "flag-amber"
+        css_class = "flag-protocol-strong" if severity == 3 else "flag-protocol-soft"
         return message, css_class, severity
     return "Fora da janela de protocolo", "flag-green", 0
 
@@ -2214,7 +2256,7 @@ def render_dashboard(
     with col1:
         render_metric("Ciclos nos próximos 7 dias", str(int(chemo_week)), "Janela curta para validar todo o fluxo.", "metric-a")
     with col2:
-        render_metric("Janela de protocolo", str(int(protocol_window)), "Pacientes que atingiram o prazo para solicitar o próximo ciclo.", "metric-b")
+        render_metric("Janela de protocolo", str(int(protocol_window)), "Pacientes que atingiram a janela de 21 dias para solicitar o próximo ciclo.", "metric-protocol")
     with col3:
         render_metric("Pendentes no convênio", str(int(need_authorization)), "Inclui não enviados, em análise ou negados.", "metric-c")
     with col4:
@@ -2223,6 +2265,7 @@ def render_dashboard(
     left, right = st.columns([1.25, 1])
     with left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<span class="section-chip section-chip-operational">Operacional</span>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Fila prioritária operacional</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="subtle">Quem precisa de ação para não perder o ciclo atual.</div>',
@@ -2259,9 +2302,10 @@ def render_dashboard(
 
     with right:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<span class="section-chip section-chip-protocol">Protocolo</span>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Janela de protocolo</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="subtle">Pacientes que entraram no prazo para solicitar o próximo ciclo.</div>',
+            '<div class="subtle">Pacientes que entraram na janela de 21 dias para solicitar o próximo ciclo.</div>',
             unsafe_allow_html=True,
         )
         if patients_df.empty:
@@ -2273,19 +2317,24 @@ def render_dashboard(
             if protocol_watch.empty:
                 st.success("Nenhum paciente dentro da janela de protocolo neste filtro.")
             else:
-                protocol_watch["Dias para ciclo"] = protocol_watch["Dias para ciclo"].fillna("-")
-                st.dataframe(
-                    protocol_watch[
-                        ["name", "doctor_name", "Próxima quimio", "Dias para ciclo", "Status prescrição", "Alerta de protocolo"]
-                    ].rename(
-                        columns={
-                            "name": "Paciente",
-                            "doctor_name": "Médico",
-                        }
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                for _, row in protocol_watch.head(8).iterrows():
+                    protocol_message, protocol_flag_class, _ = evaluate_protocol_alert(row)
+                    st.markdown(
+                        f"""
+                        <div class="protocol-card">
+                            <div style="display:flex; justify-content:space-between; gap: 12px; align-items:flex-start;">
+                                <div>
+                                    <div class="protocol-card-title">{row["name"]}</div>
+                                    <div class="protocol-card-copy">{row["doctor_name"]} | {row["regimen"]}</div>
+                                    <div class="protocol-card-copy">Próxima quimio: {row["Próxima quimio"]}</div>
+                                    <div class="protocol-card-copy">{protocol_message}</div>
+                                </div>
+                                <span class="flag {protocol_flag_class}">21 dias</span>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("")
@@ -2724,6 +2773,7 @@ def render_alerts_tab(filtered_patients: pd.DataFrame) -> None:
             ["Severidade protocolo", "Dias para ciclo"], ascending=[False, True]
         )
 
+        st.markdown('<span class="section-chip section-chip-operational">Operacional</span>', unsafe_allow_html=True)
         st.markdown("**Operacional agora**")
         st.caption("Aqui ficam apenas os riscos do ciclo atual: agenda, autorização e atraso.")
         if operational_alerts.empty:
@@ -2753,8 +2803,9 @@ def render_alerts_tab(filtered_patients: pd.DataFrame) -> None:
             )
 
         st.markdown("---")
+        st.markdown('<span class="section-chip section-chip-protocol">Protocolo</span>', unsafe_allow_html=True)
         st.markdown("**Protocolos em janela de prescrição**")
-        st.caption("Aqui ficam os pacientes que atingiram o prazo para solicitar o próximo ciclo.")
+        st.caption("Aqui ficam os pacientes que atingiram a janela de 21 dias para solicitar o próximo ciclo.")
         if protocol_alerts.empty:
             st.success("Nenhum protocolo entrou na janela de prescrição neste filtro.")
         else:
