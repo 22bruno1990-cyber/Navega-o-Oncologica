@@ -1,0 +1,7 @@
+.streamlit/secrets.toml
+data/oncologia_cuidado.db
+data/cloud_primary_workbook.xlsx
+.DS_Store
+__pycache__/
+*.json
+*.xlsx
