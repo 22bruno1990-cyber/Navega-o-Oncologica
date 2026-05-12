@@ -85,6 +85,7 @@ PATIENT_COLUMNS = {
     "scheduling_status": "TEXT NOT NULL DEFAULT 'not_booked'",
     "scheduled_cycle_date": "TEXT",
     "next_cycle_alert_days": "INTEGER NOT NULL DEFAULT 7",
+    "protocol_next_cycle_date": "TEXT",
     "source_sheet_name": "TEXT",
     "source_row_number": "INTEGER",
 }
@@ -578,6 +579,7 @@ def init_db() -> None:
             scheduling_status TEXT NOT NULL DEFAULT 'not_booked',
             scheduled_cycle_date TEXT,
             next_cycle_alert_days INTEGER NOT NULL DEFAULT 7,
+            protocol_next_cycle_date TEXT,
             FOREIGN KEY (doctor_id) REFERENCES doctors(id)
         );
 
@@ -942,6 +944,18 @@ def choose_next_relevant_date(dates: list[date]) -> date | None:
     return dates[-1]
 
 
+def choose_following_protocol_date(dates: list[date]) -> date | None:
+    if not dates:
+        return None
+    reference = choose_next_relevant_date(dates)
+    if reference is None:
+        return None
+    future_dates = [item for item in dates if item > reference]
+    if future_dates:
+        return future_dates[0]
+    return reference
+
+
 def evaluate_patient_alerts(row: pd.Series) -> tuple[str, str, int]:
     delta = days_until(row.get("next_chemo_date"))
     authorization_status = row.get("authorization_status")
@@ -975,7 +989,8 @@ def evaluate_patient_alerts(row: pd.Series) -> tuple[str, str, int]:
 
 
 def evaluate_protocol_alert(row: pd.Series) -> tuple[str, str, int]:
-    delta = days_until(row.get("next_chemo_date"))
+    reference_date = row.get("protocol_next_cycle_date") or row.get("next_chemo_date")
+    delta = days_until(reference_date)
     alert_days = int(row.get("next_cycle_alert_days") or 21)
     prescription_status = row.get("prescription_status")
 
@@ -1038,6 +1053,7 @@ def load_patients() -> pd.DataFrame:
             p.scheduling_status,
             p.scheduled_cycle_date,
             p.next_cycle_alert_days,
+            p.protocol_next_cycle_date,
             p.source_sheet_name,
             p.source_row_number
         FROM patients p
@@ -1368,7 +1384,9 @@ def map_sheet_row_to_patient_payload(
 ) -> dict[str, object]:
     infusion_dates = extract_cycle_dates(row_data)
     next_infusion_date = choose_next_relevant_date(infusion_dates)
+    protocol_cycle_date = choose_following_protocol_date(infusion_dates)
     next_infusion = next_infusion_date.strftime(DATE_FMT) if next_infusion_date else None
+    protocol_next_cycle = protocol_cycle_date.strftime(DATE_FMT) if protocol_cycle_date else None
 
     notes_parts = [
         normalize_uploaded_text(row_data.get("notes")),
@@ -1397,6 +1415,7 @@ def map_sheet_row_to_patient_payload(
         "scheduling_status": scheduling_status,
         "scheduled_cycle_date": next_infusion,
         "next_cycle_alert_days": 21,
+        "protocol_next_cycle_date": protocol_next_cycle,
         "doctor_name": doctor_name,
         "source_sheet_name": source_sheet_name,
         "source_row_number": source_row_number,
@@ -1424,6 +1443,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
             "next_cycle_alert_days": row["next_cycle_alert_days"],
             "next_chemo_date": row["next_chemo_date"],
             "scheduled_cycle_date": row["scheduled_cycle_date"],
+            "protocol_next_cycle_date": row["protocol_next_cycle_date"],
         }
         for row in conn.execute(
             """
@@ -1437,7 +1457,8 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                 scheduling_status,
                 next_cycle_alert_days,
                 next_chemo_date,
-                scheduled_cycle_date
+                scheduled_cycle_date,
+                protocol_next_cycle_date
             FROM patients
             WHERE source_sheet_name IS NOT NULL AND source_row_number IS NOT NULL
             """
@@ -1513,6 +1534,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     "scheduling_status",
                     "next_chemo_date",
                     "scheduled_cycle_date",
+                    "protocol_next_cycle_date",
                 ]:
                     if existing_state.get(field_name) not in {None, ""}:
                         payload[field_name] = existing_state[field_name]
@@ -1530,9 +1552,9 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     insurance_name, prescription_status, prescription_requested_date,
                     authorization_status, authorization_submission_date,
                     authorization_valid_until, scheduling_status, scheduled_cycle_date,
-                    next_cycle_alert_days, source_sheet_name, source_row_number
+                    next_cycle_alert_days, protocol_next_cycle_date, source_sheet_name, source_row_number
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     doctor_id,
@@ -1553,6 +1575,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     payload["scheduling_status"],
                     payload["scheduled_cycle_date"],
                     payload["next_cycle_alert_days"],
+                    payload["protocol_next_cycle_date"],
                     payload["source_sheet_name"],
                     payload["source_row_number"],
                 ),
@@ -1754,7 +1777,7 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
         selected_session = patient_sessions.iloc[0]
         selected_cycle_value = selected_session["session_date"].strftime(DATE_FMT)
 
-    info1, info2, info3 = st.columns(3)
+    info1, info2, info3, info4 = st.columns(4)
     with info1:
         st.write(f"**Convênio:** {patient_row['insurance_name'] or 'Não informado'}")
     with info2:
@@ -1762,6 +1785,8 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
     with info3:
         session_scheduling = selected_session["scheduling_status"] if selected_session is not None else "not_booked"
         st.write(f"**Agenda atual:** {format_status(session_scheduling, SCHEDULING_LABELS)}")
+    with info4:
+        st.write(f"**Próximo protocolo:** {format_date(patient_row.get('protocol_next_cycle_date'))}")
 
     if not patient_sessions.empty:
         session_display = patient_sessions[["session_date", "cycle_label", "status"]].copy()
@@ -1811,6 +1836,58 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
 
     if date_options:
         st.session_state["selected_calendar_cycle_date"] = selected_cycle_value
+
+    st.markdown("---")
+    st.markdown("**Planejamento do próximo ciclo do protocolo**")
+    protocol_default_date = parse_date(patient_row.get("protocol_next_cycle_date"))
+    if protocol_default_date is None:
+        base_date = parse_date(selected_cycle_value) or parse_date(patient_row.get("next_chemo_date")) or date.today()
+        protocol_default_date = base_date + timedelta(days=int(patient_row.get("cycle_interval_days") or 30))
+
+    with st.form(f"calendar_patient_protocol_form_{selected_patient_id}"):
+        protocol_next_cycle_date = st.date_input(
+            "Próxima data futura do protocolo",
+            value=protocol_default_date,
+        )
+        protocol_alert_days = st.number_input(
+            "Alertar com quantos dias de antecedência",
+            min_value=1,
+            max_value=90,
+            value=int(patient_row.get("next_cycle_alert_days") or 21),
+        )
+        create_future_session = st.checkbox(
+            "Criar também essa data na agenda futura do paciente",
+            value=False,
+        )
+        protocol_submitted = st.form_submit_button("Salvar regra do protocolo", use_container_width=True)
+        if protocol_submitted:
+            update_patient_record(
+                selected_patient_id,
+                {
+                    "protocol_next_cycle_date": protocol_next_cycle_date.strftime(DATE_FMT) if protocol_next_cycle_date else None,
+                    "next_cycle_alert_days": int(protocol_alert_days),
+                },
+            )
+
+            if create_future_session and protocol_next_cycle_date:
+                existing_future_match = patient_sessions[
+                    patient_sessions["session_date"] == protocol_next_cycle_date
+                ]
+                if existing_future_match.empty:
+                    insert_chemo_session(
+                        {
+                            "patient_id": selected_patient_id,
+                            "scheduled_date": protocol_next_cycle_date.strftime(DATE_FMT),
+                            "cycle_label": patient_row["regimen"] or "Próximo ciclo",
+                            "status": "scheduled",
+                            "notes": "Sessão futura criada pelo planejamento do protocolo.",
+                            "prescription_status": "not_requested",
+                            "authorization_status": "not_sent",
+                            "scheduling_status": "not_booked",
+                        }
+                    )
+            st.success("Regra do protocolo atualizada.")
+            st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2084,6 +2161,7 @@ def build_operational_table(filtered_patients: pd.DataFrame) -> pd.DataFrame:
         return display
     display["Dias para ciclo"] = display["next_chemo_date"].apply(days_until)
     display["Próxima quimio"] = display["next_chemo_date"].apply(format_date)
+    display["Próximo protocolo"] = display["protocol_next_cycle_date"].apply(format_date)
     display["Data agenda"] = display["scheduled_cycle_date"].apply(format_date)
     display["Status prescrição"] = display["prescription_status"].apply(lambda value: format_status(value, PRESCRIPTION_LABELS))
     display["Status autorização"] = display["authorization_status"].apply(lambda value: format_status(value, AUTHORIZATION_LABELS))
@@ -2100,6 +2178,7 @@ def update_patient_record(patient_id: int, updates: dict[str, object]) -> None:
         "diagnosis",
         "regimen",
         "next_chemo_date",
+        "protocol_next_cycle_date",
         "notes",
         "insurance_name",
         "prescription_status",
@@ -2693,6 +2772,8 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
             diagnosis = st.text_input("Diagnóstico", value=patient_row["diagnosis"] or "")
             regimen = st.text_input("Tratamento / protocolo", value=patient_row["regimen"] or "")
             next_chemo = st.date_input("Próxima infusão", value=parse_date(patient_row["next_chemo_date"]))
+            protocol_next_cycle = st.date_input("Próxima data do protocolo", value=parse_date(patient_row["protocol_next_cycle_date"]))
+            protocol_alert_days = st.number_input("Janela do protocolo (dias antes)", min_value=1, max_value=90, value=int(patient_row["next_cycle_alert_days"] or 21))
             insurance_name = st.text_input("Convênio", value=patient_row["insurance_name"] or "")
             notes = st.text_area("Observações", value=patient_row["notes"] or "")
             st.caption("Os flags de prescrição, autorização e agendamento agora são controlados por ciclo dentro do calendário.")
@@ -2703,6 +2784,8 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
                     "regimen": regimen.strip(),
                     "next_chemo_date": next_chemo.strftime(DATE_FMT) if next_chemo else None,
                     "scheduled_cycle_date": next_chemo.strftime(DATE_FMT) if next_chemo else None,
+                    "protocol_next_cycle_date": protocol_next_cycle.strftime(DATE_FMT) if protocol_next_cycle else None,
+                    "next_cycle_alert_days": int(protocol_alert_days),
                     "insurance_name": insurance_name.strip(),
                     "notes": notes.strip(),
                 }
@@ -2735,10 +2818,12 @@ def render_patients_tab(filtered_patients: pd.DataFrame) -> None:
                     "diagnosis",
                     "regimen",
                     "Próxima quimio",
+                    "Próximo protocolo",
                     "Status prescrição",
                     "Status autorização",
                     "Status agenda",
                     "Alerta operacional",
+                    "Alerta de protocolo",
                     "support_plan",
                     "notes",
                 ]
