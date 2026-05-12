@@ -53,15 +53,15 @@ STATUS_LABELS = {
 }
 
 PRESCRIPTION_LABELS = {
-    "not_requested": "Nao solicitada",
-    "requested": "Solicitada ao medico",
+    "not_requested": "Não solicitada",
+    "requested": "Solicitada ao médico",
     "prescribed": "Prescrita",
-    "sent_to_insurance": "Enviada ao convenio",
+    "sent_to_insurance": "Enviada ao convênio",
 }
 
 AUTHORIZATION_LABELS = {
-    "not_sent": "Nao enviada",
-    "pending": "Em analise",
+    "not_sent": "Não enviada",
+    "pending": "Em análise",
     "authorized": "Autorizada",
     "denied": "Negada",
 }
@@ -95,7 +95,7 @@ CHEMO_SESSION_COLUMNS = {
 
 
 st.set_page_config(
-    page_title="Navegacao Oncologica",
+    page_title="Navegação Oncológica",
     page_icon="stethoscope",
     layout="wide",
 )
@@ -474,23 +474,21 @@ def render_login_gate() -> None:
             }
         </style>
         <div class="hero">
-            <h1 style="color:#ffffff !important;">Navegacao Oncologica</h1>
+            <h1 style="color:#ffffff !important;">Navegação Oncológica</h1>
             <p style="color:#f3fbff !important;">
-                Acesso web protegido para acompanhar agenda, ciclos e autorizacoes dos pacientes.
+                Acesso web protegido para acompanhar agenda, ciclos e autorizações dos pacientes.
             </p>
         </div>
-        <div class="login-shell">
-            <div class="login-card">
-                <div class="login-title">Entrar no painel</div>
-                <div class="login-copy">
-                    Use o usuario e a senha configurados neste computador para abrir o app em outros dispositivos.
-                </div>
         """,
         unsafe_allow_html=True,
     )
 
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Acesso ao painel</div>', unsafe_allow_html=True)
+    st.caption("Entre com o usuário e a senha configurados para este aplicativo.")
+
     with st.form("login_gate_form"):
-        username = st.text_input("Usuario")
+        username = st.text_input("Usuário")
         password = st.text_input("Senha", type="password")
         submitted = st.form_submit_button("Entrar", use_container_width=True)
         if submitted:
@@ -499,9 +497,9 @@ def render_login_gate() -> None:
                 st.success("Acesso liberado.")
                 st.rerun()
             else:
-                st.error("Usuario ou senha invalidos.")
+                st.error("Usuário ou senha inválidos.")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def init_db() -> None:
@@ -1338,7 +1336,7 @@ def map_sheet_row_to_patient_payload(
 def sync_google_sheets_to_db() -> tuple[int, int]:
     workbook_path = find_primary_workbook_file()
     if workbook_path is None:
-        raise FileNotFoundError("Planilha principal .xlsx nao encontrada na pasta do projeto.")
+        raise FileNotFoundError("Planilha principal .xlsx não encontrada na pasta do projeto.")
 
     doctor_sheets = get_workbook_doctor_sheet_titles(workbook_path)
     conn = get_connection()
@@ -1524,7 +1522,7 @@ def update_google_sheet_patient_row(patient_row: pd.Series, updates: dict[str, o
 
     workbook_path = find_primary_workbook_file()
     if workbook_path is None:
-        raise FileNotFoundError("Planilha principal .xlsx nao encontrada na pasta do projeto.")
+        raise FileNotFoundError("Planilha principal .xlsx não encontrada na pasta do projeto.")
 
     row_number = int(source_row_number)
     from openpyxl import load_workbook
@@ -1623,10 +1621,10 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
     if patient_matches.empty:
         top_left, _ = st.columns([1, 5])
         with top_left:
-            if st.button("Voltar para o calendario", use_container_width=True):
+            if st.button("Voltar para o calendário", use_container_width=True):
                 close_patient_detail()
                 st.rerun()
-        st.warning("Nao encontrei o paciente selecionado neste momento. Tente voltar ao calendario e abrir novamente.")
+        st.warning("Não encontrei o paciente selecionado neste momento. Tente voltar ao calendário e abrir novamente.")
         return
     patient_row = patient_matches.iloc[0]
 
@@ -1642,7 +1640,7 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
 
     top_left, top_right = st.columns([1, 5])
     with top_left:
-        if st.button("Voltar para o calendario", use_container_width=True):
+        if st.button("Voltar para o calendário", use_container_width=True):
             close_patient_detail()
             st.rerun()
     with top_right:
@@ -1651,14 +1649,14 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown(f'<div class="section-title">Resumo do paciente: {patient_row["name"]}</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="subtle">{patient_row["doctor_name"]} | {patient_row["regimen"] or "Sem protocolo informado"} | {patient_row["diagnosis"] or "Sem diagnostico informado"}</div>',
+        f'<div class="subtle">{patient_row["doctor_name"]} | {patient_row["regimen"] or "Sem protocolo informado"} | {patient_row["diagnosis"] or "Sem diagnóstico informado"}</div>',
         unsafe_allow_html=True,
     )
 
     if date_options:
         default_index = date_options.index(selected_cycle_value) if selected_cycle_value in date_options else 0
         selected_cycle_date = st.selectbox(
-            "Dia do ciclo / execucao",
+            "Dia do ciclo / execução",
             date_options,
             index=default_index,
             format_func=lambda value: datetime.strptime(value, DATE_FMT).strftime("%d/%m/%Y"),
@@ -1682,7 +1680,7 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
 
     info1, info2, info3 = st.columns(3)
     with info1:
-        st.write(f"**Convenio:** {patient_row['insurance_name'] or 'Nao informado'}")
+        st.write(f"**Convênio:** {patient_row['insurance_name'] or 'Não informado'}")
     with info2:
         st.write(f"**Ciclo em foco:** {format_date(selected_cycle_value)}")
     with info3:
@@ -1707,7 +1705,7 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
     with st.form(f"calendar_patient_detail_form_{selected_patient_id}"):
         notes = st.text_area("Observacoes do ciclo", value=session_notes or "")
         prescribed_checked = st.checkbox("Prescricao gerada", value=prescribed_flag)
-        authorization_checked = st.checkbox("Encaminhado para autorizacao", value=authorization_flag)
+        authorization_checked = st.checkbox("Encaminhado para autorização", value=authorization_flag)
         scheduled_checked = st.checkbox("Agendamento realizado", value=scheduling_flag)
         submitted = st.form_submit_button("Salvar acompanhamento", use_container_width=True)
         if submitted:
@@ -1719,7 +1717,7 @@ def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtere
 
             session_matches = patient_sessions[patient_sessions["session_date"] == parse_date(selected_cycle_date)]
             if session_matches.empty:
-                st.error("Nao encontrei o ciclo selecionado para salvar as flags.")
+                st.error("Não encontrei o ciclo selecionado para salvar as flags.")
             else:
                 target_session = session_matches.iloc[0]
                 update_chemo_session_record(
@@ -1775,14 +1773,14 @@ def render_calendar_panel(
             unsafe_allow_html=True,
         )
     if filtered_patients.empty:
-        st.info("Nenhum paciente encontrado para montar o calendario.")
+        st.info("Nenhum paciente encontrado para montar o calendário.")
         if show_panel_wrapper:
             st.markdown("</div>", unsafe_allow_html=True)
         return
 
     calendar_events = build_calendar_events(filtered_patients, filtered_sessions)
     if calendar_events.empty:
-        st.info("Os pacientes filtrados ainda nao possuem agendamentos para montar o calendario.")
+        st.info("Os pacientes filtrados ainda não possuem agendamentos para montar o calendário.")
         if show_panel_wrapper:
             st.markdown("</div>", unsafe_allow_html=True)
         return
@@ -1796,7 +1794,7 @@ def render_calendar_panel(
     default_month = date.today().strftime("%Y-%m")
     default_index = month_options.index(default_month) if default_month in month_options else 0
     selected_month = st.selectbox(
-        "Mes do calendario",
+        "Mês do calendário",
         month_options,
         index=default_index,
         format_func=format_month_label_pt,
@@ -2321,7 +2319,7 @@ def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Novos cadastros</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="subtle">Registre dados do ciclo para acompanhar prescricao, convenio e agenda no mesmo lugar.</div>',
+        '<div class="subtle">Registre dados do ciclo para acompanhar prescrição, convênio e agenda no mesmo lugar.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2337,7 +2335,7 @@ def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> 
                     st.warning("Informe o nome do medico.")
                 else:
                     insert_doctor(doctor_name, specialty)
-                    st.success("Medico cadastrado com sucesso.")
+                    st.success("Médico cadastrado com sucesso.")
                     st.rerun()
 
     with patient_col:
@@ -2350,20 +2348,20 @@ def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> 
             if not doctor_options:
                 st.info("Cadastre um medico antes de cadastrar pacientes.")
             else:
-                selected_doctor = st.selectbox("Medico responsavel", list(doctor_options.keys()))
+                selected_doctor = st.selectbox("Médico responsável", list(doctor_options.keys()))
                 patient_name = st.text_input("Nome do paciente")
                 diagnosis = st.text_input("Diagnostico")
                 regimen = st.text_input("Protocolo de quimioterapia")
                 insurance_name = st.text_input("Convenio")
                 cycle_interval_days = st.number_input("Intervalo entre ciclos (dias)", min_value=1, max_value=60, value=21)
-                next_cycle_alert_days = st.number_input("Avisar para nova prescricao com quantos dias de antecedencia", min_value=1, max_value=30, value=7)
-                last_chemo_date = st.date_input("Ultima quimioterapia", value=None)
-                next_chemo_date = st.date_input("Proxima quimioterapia prevista", value=None)
+                next_cycle_alert_days = st.number_input("Avisar para nova prescrição com quantos dias de antecedência", min_value=1, max_value=30, value=7)
+                last_chemo_date = st.date_input("Última quimioterapia", value=None)
+                next_chemo_date = st.date_input("Próxima quimioterapia prevista", value=None)
                 support_plan = st.text_input("Plano de suporte")
-                prescription_status = st.selectbox("Status da prescricao", list(PRESCRIPTION_LABELS.keys()), format_func=lambda x: PRESCRIPTION_LABELS[x])
+                prescription_status = st.selectbox("Status da prescrição", list(PRESCRIPTION_LABELS.keys()), format_func=lambda x: PRESCRIPTION_LABELS[x])
                 prescription_requested_date = st.date_input("Data da solicitacao ao medico", value=None)
-                authorization_status = st.selectbox("Status da autorizacao", list(AUTHORIZATION_LABELS.keys()), format_func=lambda x: AUTHORIZATION_LABELS[x])
-                authorization_submission_date = st.date_input("Data de envio ao convenio", value=None)
+                authorization_status = st.selectbox("Status da autorização", list(AUTHORIZATION_LABELS.keys()), format_func=lambda x: AUTHORIZATION_LABELS[x])
+                authorization_submission_date = st.date_input("Data de envio ao convênio", value=None)
                 authorization_valid_until = st.date_input("Autorizacao valida ate", value=None)
                 scheduling_status = st.selectbox("Status do agendamento", list(SCHEDULING_LABELS.keys()), format_func=lambda x: SCHEDULING_LABELS[x])
                 scheduled_cycle_date = st.date_input("Data agendada para infusao", value=None)
@@ -2467,7 +2465,7 @@ def render_import_tab() -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Importar planilha de pacientes</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="subtle">Voce pode subir uma planilha do Excel Online em formato .xlsx ou .csv para cadastrar pacientes em lote e gerar os agendamentos no app.</div>',
+        '<div class="subtle">Você pode subir uma planilha do Excel Online em formato .xlsx ou .csv para cadastrar pacientes em lote e gerar os agendamentos no app.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2502,7 +2500,7 @@ def render_import_tab() -> None:
     st.dataframe(template_df, use_container_width=True, hide_index=True)
 
     st.caption(
-        "Status aceitos: prescricao = not_requested, requested, prescribed, sent_to_insurance | autorizacao = not_sent, pending, authorized, denied | agendamento = not_booked, awaiting_slot, scheduled, confirmed"
+        "Status aceitos: prescrição = not_requested, requested, prescribed, sent_to_insurance | autorização = not_sent, pending, authorized, denied | agendamento = not_booked, awaiting_slot, scheduled, confirmed"
     )
 
     uploaded_file = st.file_uploader(
@@ -2524,7 +2522,7 @@ def render_import_tab() -> None:
                 )
                 st.rerun()
         except Exception as exc:
-            st.error(f"Nao consegui ler a planilha. Verifique as colunas e o formato do arquivo. Detalhe: {exc}")
+            st.error(f"Não consegui ler a planilha. Verifique as colunas e o formato do arquivo. Detalhe: {exc}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2533,7 +2531,7 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Planilha principal</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="subtle">Sincronize as abas dos medicos da planilha principal e mantenha o painel alinhado ao arquivo fonte.</div>',
+        '<div class="subtle">Sincronize as abas dos médicos da planilha principal e mantenha o painel alinhado ao arquivo fonte.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2542,25 +2540,25 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
         if st.button("Sincronizar agora com a planilha principal", use_container_width=True):
             try:
                 imported, updated = sync_google_sheets_to_db()
-                st.success(f"Sincronizacao concluida: {imported} novo(s) e {updated} atualizado(s).")
+                st.success(f"Sincronização concluída: {imported} novo(s) e {updated} atualizado(s).")
                 st.rerun()
             except Exception as exc:
-                st.error(f"Nao consegui sincronizar com a planilha principal. Detalhe: {exc}")
+                st.error(f"Não consegui sincronizar com a planilha principal. Detalhe: {exc}")
         st.caption("A sincronizacao usa as abas com nome de medico, como `Dr.` e `Dra.`.")
 
     with col2:
         workbook_file = find_primary_workbook_file()
         last_sync = get_app_state("last_google_sync_at")
         st.write("**Arquivo fonte**")
-        st.write(f"Planilha: `{workbook_file.name if workbook_file else 'nao encontrada'}`")
+        st.write(f"Planilha: `{workbook_file.name if workbook_file else 'não encontrada'}`")
         if workbook_file is not None:
             st.write(f"Caminho: `{workbook_file}`")
-        st.write(f"Ultima sincronizacao: `{last_sync or 'ainda nao sincronizado'}`")
+        st.write(f"Última sincronização: `{last_sync or 'ainda não sincronizado'}`")
 
     st.markdown("---")
     st.markdown("**Trocar a fonte da planilha**")
     st.caption(
-        "Para uso na web, voce pode enviar um novo arquivo .xlsx aqui e ele passa a ser a fonte principal do app."
+        "Para uso na web, você pode enviar um novo arquivo .xlsx aqui e ele passa a ser a fonte principal do app."
     )
     uploaded_workbook = st.file_uploader(
         "Enviar nova planilha principal",
@@ -2578,13 +2576,13 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
                 )
                 st.rerun()
             except Exception as exc:
-                st.error(f"Nao consegui trocar a planilha principal. Detalhe: {exc}")
+                st.error(f"Não consegui trocar a planilha principal. Detalhe: {exc}")
 
     google_patients = patients_df[patients_df["source_sheet_name"].notna()].copy() if not patients_df.empty else pd.DataFrame()
     st.markdown("---")
     st.markdown("**Editar paciente sincronizado**")
     if google_patients.empty:
-        st.info("Nenhum paciente sincronizado do Google Sheets ainda. Clique em sincronizar primeiro.")
+        st.info("Nenhum paciente sincronizado da planilha ainda. Clique em sincronizar primeiro.")
     else:
         patient_options = {
             f'{row["name"]} | {row["doctor_name"]}': int(row["id"])
@@ -2595,12 +2593,12 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
         patient_row = google_patients[google_patients["id"] == selected_id].iloc[0]
 
         with st.form("google_patient_edit_form"):
-            diagnosis = st.text_input("Diagnostico", value=patient_row["diagnosis"] or "")
+            diagnosis = st.text_input("Diagnóstico", value=patient_row["diagnosis"] or "")
             regimen = st.text_input("Tratamento / protocolo", value=patient_row["regimen"] or "")
-            next_chemo = st.date_input("Proxima infusao", value=parse_date(patient_row["next_chemo_date"]))
-            insurance_name = st.text_input("Convenio", value=patient_row["insurance_name"] or "")
-            notes = st.text_area("Observacoes", value=patient_row["notes"] or "")
-            st.caption("Os flags de prescricao, autorizacao e agendamento agora sao controlados por ciclo dentro do calendario.")
+            next_chemo = st.date_input("Próxima infusão", value=parse_date(patient_row["next_chemo_date"]))
+            insurance_name = st.text_input("Convênio", value=patient_row["insurance_name"] or "")
+            notes = st.text_area("Observações", value=patient_row["notes"] or "")
+            st.caption("Os flags de prescrição, autorização e agendamento agora são controlados por ciclo dentro do calendário.")
             submitted = st.form_submit_button("Salvar no app e na planilha", use_container_width=True)
             if submitted:
                 updates = {
@@ -2619,7 +2617,7 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
                     st.success("Paciente atualizado no app e gravado na planilha local.")
                     st.rerun()
                 except Exception as exc:
-                    st.error(f"Nao consegui salvar a atualizacao. Detalhe: {exc}")
+                    st.error(f"Não consegui salvar a atualização. Detalhe: {exc}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -2766,11 +2764,11 @@ def render_doctors_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> N
         st.dataframe(
             merged[["name", "specialty", "total_pacientes", "sem_agenda", "pendentes_convenio"]].rename(
                 columns={
-                    "name": "Medico",
+                    "name": "Médico",
                     "specialty": "Especialidade",
                     "total_pacientes": "Pacientes",
                     "sem_agenda": "Sem agenda",
-                    "pendentes_convenio": "Pendentes convenio",
+                    "pendentes_convenio": "Pendentes convênio",
                 }
             ),
             use_container_width=True,
@@ -2833,11 +2831,11 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-            <h1 style="color:#ffffff !important;">Navegacao Oncologica</h1>
+            <h1 style="color:#ffffff !important;">Navegação Oncológica</h1>
             <p style="color:#f3fbff !important;">
                 <span style="color:#f3fbff !important;">
-                    Painel para antecipar o proximo ciclo dos pacientes, conferir prescricao,
-                    autorizacao do convenio e agendamento da quimioterapia, reduzindo o risco
+                    Painel para antecipar o próximo ciclo dos pacientes, conferir prescrição,
+                    autorização do convênio e agendamento da quimioterapia, reduzindo o risco
                     de o paciente ficar fora da agenda.
                 </span>
             </p>
@@ -2853,26 +2851,26 @@ def main() -> None:
 
     with st.sidebar:
         st.caption(f"Acesso: {st.session_state.get('auth_user')}")
-        if st.button("Encerrar sessao", use_container_width=True):
+        if st.button("Encerrar sessão", use_container_width=True):
             st.session_state["auth_user"] = None
             close_patient_detail()
             st.rerun()
         st.markdown("---")
         st.markdown("### Filtros")
         doctor_options = ["Todos"] + doctors_df["name"].tolist()
-        selected_doctor = st.selectbox("Medico", doctor_options)
+        selected_doctor = st.selectbox("Médico", doctor_options)
 
         patient_names = patients_df["name"].tolist()
         selected_patient = st.selectbox("Paciente", ["Todos"] + patient_names)
 
         show_only_attention = st.toggle("Mostrar apenas pacientes com alerta", value=False)
         st.markdown("---")
-        st.caption("Versao focada em prescricao, convenio e agenda do ciclo.")
+        st.caption("Versão focada em prescrição, convênio e agenda do ciclo.")
         if find_primary_workbook_file() is not None:
             last_sync = get_app_state("last_google_sync_at")
             st.caption("Planilha principal conectada.")
-            st.caption(f"Ultima sincronizacao: {last_sync or 'ainda nao sincronizado'}")
-            st.caption(f"Atualizacao automatica a cada {AUTO_SYNC_MINUTES} minutos.")
+            st.caption(f"Última sincronização: {last_sync or 'ainda não sincronizado'}")
+            st.caption(f"Atualização automática a cada {AUTO_SYNC_MINUTES} minutos.")
 
     filtered_patients = patients_df.copy()
     filtered_support = support_df.copy()
@@ -2899,7 +2897,7 @@ def main() -> None:
         render_calendar_patient_detail_page(patients_df, sessions_df)
         return
 
-    tabs = st.tabs(["Visao simples", "Painel operacional", "Alertas", "Pacientes", "Medicos", "Cadastros", "Importacao", "Planilha principal"])
+    tabs = st.tabs(["Visão simples", "Painel operacional", "Alertas", "Pacientes", "Médicos", "Cadastros", "Importação", "Planilha principal"])
     with tabs[0]:
         render_simple_dashboard(filtered_patients, filtered_support, filtered_sessions)
     with tabs[1]:
