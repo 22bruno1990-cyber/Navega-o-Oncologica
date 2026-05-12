@@ -2864,7 +2864,7 @@ def maybe_auto_sync_google() -> None:
     if find_primary_workbook_file() is None:
         return
 
-    now = datetime.now()
+    now = datetime.now(APP_TIMEZONE)
     last_sync_raw = get_app_state("last_google_sync_at")
     should_sync = False
 
@@ -2873,6 +2873,8 @@ def maybe_auto_sync_google() -> None:
     else:
         try:
             last_sync = datetime.fromisoformat(last_sync_raw)
+            if last_sync.tzinfo is None:
+                last_sync = last_sync.replace(tzinfo=APP_TIMEZONE)
             should_sync = now - last_sync >= timedelta(minutes=AUTO_SYNC_MINUTES)
         except ValueError:
             should_sync = True
