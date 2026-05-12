@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import unicodedata
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -25,6 +26,7 @@ AUTO_SYNC_MINUTES = 5
 PRIMARY_WORKBOOK_NAME = "PLANILHA DE PRESCRIÇÕES - MÉDICOS JULIANA - Copiar.xlsx"
 UPLOADED_WORKBOOK_NAME = "cloud_primary_workbook.xlsx"
 ONEDRIVE_CLOUDSTORAGE_DIR = Path.home() / "Library" / "CloudStorage"
+APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 MONTH_LABELS_PT = {
     1: "janeiro",
     2: "fevereiro",
@@ -656,6 +658,18 @@ def format_date(value: str | None) -> str:
     return parsed.strftime("%d/%m/%Y") if parsed else "-"
 
 
+def format_sync_timestamp(value: str | None) -> str:
+    if not value:
+        return "ainda não sincronizado"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(APP_TIMEZONE)
+    return parsed.strftime("%d/%m/%Y às %H:%M")
+
+
 def days_until(value: str | None) -> int | None:
     parsed = parse_date(value)
     if not parsed:
@@ -736,7 +750,8 @@ def canonical_sheet_field(header: str) -> str:
         "tratamento": "regimen",
         "protocolo": "regimen",
         "proxima_infusao": "next_infusion",
-        "proxima_infusao": "next_infusion",
+        "data_da_infusao": "next_infusion",
+        "data_de_infusao": "next_infusion",
         "data_do_tratamento": "next_infusion",
         "infusao": "next_infusion",
         "observacao": "notes",
@@ -881,7 +896,7 @@ def choose_next_relevant_date(dates: list[date]) -> date | None:
     threshold = date.today() - timedelta(days=7)
     future_or_recent = [item for item in dates if item >= threshold]
     if future_or_recent:
-        return future_or_recent[-1]
+        return future_or_recent[0]
     return dates[-1]
 
 
@@ -1509,7 +1524,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
 
     conn.commit()
     conn.close()
-    set_app_state("last_google_sync_at", datetime.now().isoformat(timespec="seconds"))
+    set_app_state("last_google_sync_at", datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"))
     refresh_data()
     return imported, updated
 
@@ -2553,7 +2568,7 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
         st.write(f"Planilha: `{workbook_file.name if workbook_file else 'não encontrada'}`")
         if workbook_file is not None:
             st.write(f"Caminho: `{workbook_file}`")
-        st.write(f"Última sincronização: `{last_sync or 'ainda não sincronizado'}`")
+        st.write(f"Última sincronização: `{format_sync_timestamp(last_sync)}`")
 
     st.markdown("---")
     st.markdown("**Trocar a fonte da planilha**")
