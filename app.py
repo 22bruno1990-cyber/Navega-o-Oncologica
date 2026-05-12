@@ -902,8 +902,6 @@ def choose_next_relevant_date(dates: list[date]) -> date | None:
 
 def evaluate_patient_alerts(row: pd.Series) -> tuple[str, str, int]:
     delta = days_until(row.get("next_chemo_date"))
-    alert_days = int(row.get("next_cycle_alert_days") or 0)
-    prescription_status = row.get("prescription_status")
     authorization_status = row.get("authorization_status")
     scheduling_status = row.get("scheduling_status")
 
@@ -913,11 +911,8 @@ def evaluate_patient_alerts(row: pd.Series) -> tuple[str, str, int]:
     if delta is not None and delta < 0:
         reasons.append("ciclo atrasado")
         severity = max(severity, 3)
-    if delta is not None and delta <= alert_days and prescription_status in {"not_requested", "requested"}:
-        reasons.append("solicitar ou cobrar nova prescricao")
-        severity = max(severity, 3 if prescription_status == "not_requested" else 2)
     if authorization_status in {"not_sent", "pending", "denied"}:
-        reasons.append("convencio ainda nao liberado")
+        reasons.append("convênio ainda não liberado")
         severity = max(severity, 3 if authorization_status in {"not_sent", "denied"} else 2)
     if scheduling_status in {"not_booked", "awaiting_slot"}:
         reasons.append("risco de ficar fora da agenda")
@@ -935,6 +930,28 @@ def evaluate_patient_alerts(row: pd.Series) -> tuple[str, str, int]:
     else:
         css_class = "flag-blue"
     return " | ".join(reasons), css_class, severity
+
+
+def evaluate_protocol_alert(row: pd.Series) -> tuple[str, str, int]:
+    delta = days_until(row.get("next_chemo_date"))
+    alert_days = int(row.get("next_cycle_alert_days") or 21)
+    prescription_status = row.get("prescription_status")
+
+    if delta is None:
+        return "Sem próximo ciclo definido", "flag-blue", 0
+    if prescription_status in {"prescribed", "sent_to_insurance"}:
+        return "Próximo ciclo já encaminhado", "flag-green", 0
+    if delta < 0:
+        return "Próximo ciclo já venceu a janela de protocolo", "flag-red", 3
+    if delta <= alert_days:
+        if delta == 0:
+            message = "Janela de protocolo vence hoje"
+        else:
+            message = f"Faltam {delta} dia(s) para abrir o próximo ciclo"
+        severity = 3 if prescription_status == "not_requested" else 2
+        css_class = "flag-red" if severity == 3 else "flag-amber"
+        return message, css_class, severity
+    return "Fora da janela de protocolo", "flag-green", 0
 
 
 @st.cache_data(show_spinner=False)
@@ -1337,7 +1354,7 @@ def map_sheet_row_to_patient_payload(
         "authorization_valid_until": None,
         "scheduling_status": scheduling_status,
         "scheduled_cycle_date": next_infusion,
-        "next_cycle_alert_days": 7,
+        "next_cycle_alert_days": 21,
         "doctor_name": doctor_name,
         "source_sheet_name": source_sheet_name,
         "source_row_number": source_row_number,
@@ -1452,12 +1469,14 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     "prescription_status",
                     "authorization_status",
                     "scheduling_status",
-                    "next_cycle_alert_days",
                     "next_chemo_date",
                     "scheduled_cycle_date",
                 ]:
                     if existing_state.get(field_name) not in {None, ""}:
                         payload[field_name] = existing_state[field_name]
+                existing_alert_days = existing_state.get("next_cycle_alert_days")
+                if existing_alert_days not in {None, "", 0, 7}:
+                    payload["next_cycle_alert_days"] = existing_alert_days
             if not payload["name"]:
                 continue
 
@@ -2022,13 +2041,15 @@ def build_operational_table(filtered_patients: pd.DataFrame) -> pd.DataFrame:
     if display.empty:
         return display
     display["Dias para ciclo"] = display["next_chemo_date"].apply(days_until)
-    display["Proxima quimio"] = display["next_chemo_date"].apply(format_date)
+    display["Próxima quimio"] = display["next_chemo_date"].apply(format_date)
     display["Data agenda"] = display["scheduled_cycle_date"].apply(format_date)
-    display["Status prescricao"] = display["prescription_status"].apply(lambda value: format_status(value, PRESCRIPTION_LABELS))
-    display["Status autorizacao"] = display["authorization_status"].apply(lambda value: format_status(value, AUTHORIZATION_LABELS))
+    display["Status prescrição"] = display["prescription_status"].apply(lambda value: format_status(value, PRESCRIPTION_LABELS))
+    display["Status autorização"] = display["authorization_status"].apply(lambda value: format_status(value, AUTHORIZATION_LABELS))
     display["Status agenda"] = display["scheduling_status"].apply(lambda value: format_status(value, SCHEDULING_LABELS))
     display["Alerta operacional"] = display.apply(lambda row: evaluate_patient_alerts(row)[0], axis=1)
-    display["Severidade"] = display.apply(lambda row: evaluate_patient_alerts(row)[2], axis=1)
+    display["Severidade operacional"] = display.apply(lambda row: evaluate_patient_alerts(row)[2], axis=1)
+    display["Alerta de protocolo"] = display.apply(lambda row: evaluate_protocol_alert(row)[0], axis=1)
+    display["Severidade protocolo"] = display.apply(lambda row: evaluate_protocol_alert(row)[2], axis=1)
     return display
 
 
@@ -2173,8 +2194,8 @@ def render_dashboard(
         if not patients_df.empty
         else 0
     )
-    need_prescription = (
-        patients_df["Alerta operacional"].str.contains("prescricao", case=False, na=False).sum()
+    protocol_window = (
+        (patients_df["Severidade protocolo"] > 0).sum()
         if not patients_df.empty
         else 0
     )
@@ -2191,26 +2212,30 @@ def render_dashboard(
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        render_metric("Ciclos nos proximos 7 dias", str(int(chemo_week)), "Janela curta para validar todo o fluxo.", "metric-a")
+        render_metric("Ciclos nos próximos 7 dias", str(int(chemo_week)), "Janela curta para validar todo o fluxo.", "metric-a")
     with col2:
-        render_metric("Cobrar prescricao", str(int(need_prescription)), "Pacientes no ponto de pedir novo ciclo ao medico.", "metric-b")
+        render_metric("Janela de protocolo", str(int(protocol_window)), "Pacientes que atingiram o prazo para solicitar o próximo ciclo.", "metric-b")
     with col3:
-        render_metric("Pendentes no convenio", str(int(need_authorization)), "Inclui nao enviados, em analise ou negados.", "metric-c")
+        render_metric("Pendentes no convênio", str(int(need_authorization)), "Inclui não enviados, em análise ou negados.", "metric-c")
     with col4:
-        render_metric("Risco de ficar fora agenda", str(int(agenda_risk)), "Pacientes sem vaga confirmada para infusao.", "metric-d")
+        render_metric("Risco de ficar fora da agenda", str(int(agenda_risk)), "Pacientes sem vaga confirmada para infusão.", "metric-d")
 
     left, right = st.columns([1.25, 1])
     with left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Fila prioritaria da navegacao</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Fila prioritária operacional</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="subtle">Quem precisa de acao para nao perder o proximo ciclo.</div>',
+            '<div class="subtle">Quem precisa de ação para não perder o ciclo atual.</div>',
             unsafe_allow_html=True,
         )
         if patients_df.empty:
             st.info("Nenhum paciente encontrado com os filtros selecionados.")
         else:
-            watch = patients_df.sort_values(["Severidade", "Dias para ciclo"], ascending=[False, True]).head(10)
+            watch = patients_df[patients_df["Severidade operacional"] > 0].sort_values(
+                ["Severidade operacional", "Dias para ciclo"], ascending=[False, True]
+            ).head(10)
+            if watch.empty:
+                st.success("Nenhuma pendência operacional prioritária neste filtro.")
             for _, row in watch.iterrows():
                 reason, css_class, _ = evaluate_patient_alerts(row)
                 delta_label, _ = build_status_flag(row["Dias para ciclo"])
@@ -2221,7 +2246,7 @@ def render_dashboard(
                             <div>
                                 <div style="font-weight:800; color:#113847;">{row["name"]}</div>
                                 <div style="color:#56707a; font-size:0.92rem;">{row["doctor_name"]} | {row["regimen"]}</div>
-                                <div style="color:#56707a; font-size:0.9rem;">Proximo ciclo: {row["Proxima quimio"]} ({delta_label})</div>
+                                <div style="color:#56707a; font-size:0.9rem;">Próximo ciclo: {row["Próxima quimio"]} ({delta_label})</div>
                                 <div style="color:#8a4b07; font-size:0.9rem; margin-top:6px;">{reason}</div>
                             </div>
                             <span class="flag {css_class}">{format_status(row["scheduling_status"], SCHEDULING_LABELS)}</span>
@@ -2234,25 +2259,33 @@ def render_dashboard(
 
     with right:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Checklist por etapa</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Janela de protocolo</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="subtle">Resumo para ver onde o fluxo esta travando.</div>',
+            '<div class="subtle">Pacientes que entraram no prazo para solicitar o próximo ciclo.</div>',
             unsafe_allow_html=True,
         )
         if patients_df.empty:
             st.info("Sem dados para resumir.")
         else:
-            summary = pd.DataFrame(
-                [
-                    {"Etapa": "Prescricao nao solicitada", "Pacientes": int((patients_df["prescription_status"] == "not_requested").sum())},
-                    {"Etapa": "Prescricao solicitada", "Pacientes": int((patients_df["prescription_status"] == "requested").sum())},
-                    {"Etapa": "Convencio pendente", "Pacientes": int((patients_df["authorization_status"] == "pending").sum())},
-                    {"Etapa": "Convencio nao enviado", "Pacientes": int((patients_df["authorization_status"] == "not_sent").sum())},
-                    {"Etapa": "Sem agenda", "Pacientes": int((patients_df["scheduling_status"] == "not_booked").sum())},
-                    {"Etapa": "Aguardando vaga", "Pacientes": int((patients_df["scheduling_status"] == "awaiting_slot").sum())},
-                ]
-            )
-            st.dataframe(summary, use_container_width=True, hide_index=True)
+            protocol_watch = patients_df[patients_df["Severidade protocolo"] > 0].sort_values(
+                ["Severidade protocolo", "Dias para ciclo"], ascending=[False, True]
+            ).copy()
+            if protocol_watch.empty:
+                st.success("Nenhum paciente dentro da janela de protocolo neste filtro.")
+            else:
+                protocol_watch["Dias para ciclo"] = protocol_watch["Dias para ciclo"].fillna("-")
+                st.dataframe(
+                    protocol_watch[
+                        ["name", "doctor_name", "Próxima quimio", "Dias para ciclo", "Status prescrição", "Alerta de protocolo"]
+                    ].rename(
+                        columns={
+                            "name": "Paciente",
+                            "doctor_name": "Médico",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("")
@@ -2263,24 +2296,24 @@ def render_dashboard(
         if patients_df.empty:
             st.info("Nenhum paciente para consolidar.")
         else:
-            display = patients_df.sort_values(["Severidade", "Dias para ciclo"], ascending=[False, True]).copy()
+            display = patients_df.sort_values(["Severidade operacional", "Dias para ciclo"], ascending=[False, True]).copy()
             st.dataframe(
                 display[
                     [
                         "name",
                         "doctor_name",
                         "insurance_name",
-                        "Proxima quimio",
-                        "Status prescricao",
-                        "Status autorizacao",
+                        "Próxima quimio",
+                        "Status prescrição",
+                        "Status autorização",
                         "Status agenda",
                         "Alerta operacional",
                     ]
                 ].rename(
                     columns={
                         "name": "Paciente",
-                        "doctor_name": "Medico",
-                        "insurance_name": "Convenio",
+                        "doctor_name": "Médico",
+                        "insurance_name": "Convênio",
                     }
                 ),
                 use_container_width=True,
@@ -2369,7 +2402,7 @@ def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> 
                 regimen = st.text_input("Protocolo de quimioterapia")
                 insurance_name = st.text_input("Convenio")
                 cycle_interval_days = st.number_input("Intervalo entre ciclos (dias)", min_value=1, max_value=60, value=21)
-                next_cycle_alert_days = st.number_input("Avisar para nova prescrição com quantos dias de antecedência", min_value=1, max_value=30, value=7)
+                next_cycle_alert_days = st.number_input("Avisar para nova prescrição com quantos dias de antecedência", min_value=1, max_value=60, value=21)
                 last_chemo_date = st.date_input("Última quimioterapia", value=None)
                 next_chemo_date = st.date_input("Próxima quimioterapia prevista", value=None)
                 support_plan = st.text_input("Plano de suporte")
@@ -2504,7 +2537,7 @@ def render_import_tab() -> None:
                 "autorizacao_valida_ate": "2026-05-30",
                 "status_agendamento": "confirmed",
                 "data_agendada": "2026-05-04",
-                "alerta_novo_ciclo_dias": 7,
+                "alerta_novo_ciclo_dias": 21,
                 "ciclo": "Ciclo 4",
                 "suporte": "Ondansetrona + dexametasona",
                 "observacoes": "Paciente em seguimento semanal.",
@@ -2652,9 +2685,9 @@ def render_patients_tab(filtered_patients: pd.DataFrame) -> None:
                     "insurance_name",
                     "diagnosis",
                     "regimen",
-                    "Proxima quimio",
-                    "Status prescricao",
-                    "Status autorizacao",
+                    "Próxima quimio",
+                    "Status prescrição",
+                    "Status autorização",
                     "Status agenda",
                     "Alerta operacional",
                     "support_plan",
@@ -2663,12 +2696,12 @@ def render_patients_tab(filtered_patients: pd.DataFrame) -> None:
             ].rename(
                 columns={
                     "name": "Paciente",
-                    "doctor_name": "Medico",
-                    "insurance_name": "Convenio",
-                    "diagnosis": "Diagnostico",
+                    "doctor_name": "Médico",
+                    "insurance_name": "Convênio",
+                    "diagnosis": "Diagnóstico",
                     "regimen": "Protocolo",
                     "support_plan": "Suporte",
-                    "notes": "Observacoes",
+                    "notes": "Observações",
                 }
             ),
             use_container_width=True,
@@ -2679,32 +2712,67 @@ def render_patients_tab(filtered_patients: pd.DataFrame) -> None:
 
 def render_alerts_tab(filtered_patients: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Alertas e priorizacao</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Alertas e priorização</div>', unsafe_allow_html=True)
     if filtered_patients.empty:
         st.info("Nenhum paciente encontrado.")
     else:
         display = build_operational_table(filtered_patients)
-        alerts = display[display["Severidade"] > 0].sort_values(["Severidade", "Dias para ciclo"], ascending=[False, True])
-        if alerts.empty:
+        operational_alerts = display[display["Severidade operacional"] > 0].sort_values(
+            ["Severidade operacional", "Dias para ciclo"], ascending=[False, True]
+        )
+        protocol_alerts = display[display["Severidade protocolo"] > 0].sort_values(
+            ["Severidade protocolo", "Dias para ciclo"], ascending=[False, True]
+        )
+
+        st.markdown("**Operacional agora**")
+        st.caption("Aqui ficam apenas os riscos do ciclo atual: agenda, autorização e atraso.")
+        if operational_alerts.empty:
             st.success("Nenhum alerta operacional importante neste filtro.")
         else:
-            alerts["Dias para ciclo"] = alerts["Dias para ciclo"].fillna("-")
+            operational_alerts["Dias para ciclo"] = operational_alerts["Dias para ciclo"].fillna("-")
             st.dataframe(
-                alerts[
+                operational_alerts[
                     [
                         "name",
                         "doctor_name",
-                        "Proxima quimio",
+                        "Próxima quimio",
                         "Dias para ciclo",
-                        "Status prescricao",
-                        "Status autorizacao",
+                        "Status prescrição",
+                        "Status autorização",
                         "Status agenda",
                         "Alerta operacional",
                     ]
                 ].rename(
                     columns={
                         "name": "Paciente",
-                        "doctor_name": "Medico",
+                        "doctor_name": "Médico",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.markdown("---")
+        st.markdown("**Protocolos em janela de prescrição**")
+        st.caption("Aqui ficam os pacientes que atingiram o prazo para solicitar o próximo ciclo.")
+        if protocol_alerts.empty:
+            st.success("Nenhum protocolo entrou na janela de prescrição neste filtro.")
+        else:
+            protocol_alerts["Dias para ciclo"] = protocol_alerts["Dias para ciclo"].fillna("-")
+            st.dataframe(
+                protocol_alerts[
+                    [
+                        "name",
+                        "doctor_name",
+                        "Próxima quimio",
+                        "Dias para ciclo",
+                        "Status prescrição",
+                        "Alerta de protocolo",
+                    ]
+                ].rename(
+                    columns={
+                        "name": "Paciente",
+                        "doctor_name": "Médico",
                     }
                 ),
                 use_container_width=True,
@@ -2903,7 +2971,9 @@ def main() -> None:
 
     if show_only_attention and not filtered_patients.empty:
         alerts = build_operational_table(filtered_patients)
-        alert_names = alerts[alerts["Severidade"] > 0]["name"].tolist()
+        alert_names = alerts[
+            (alerts["Severidade operacional"] > 0) | (alerts["Severidade protocolo"] > 0)
+        ]["name"].tolist()
         filtered_patients = filtered_patients[filtered_patients["name"].isin(alert_names)]
         filtered_support = filtered_support[filtered_support["patient_name"].isin(alert_names)]
         filtered_sessions = filtered_sessions[filtered_sessions["patient_name"].isin(alert_names)]
