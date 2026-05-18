@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import html
+import hashlib
+import hmac
 import os
+import json
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 import unicodedata
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from google.oauth2.service_account import Credentials
@@ -25,8 +30,16 @@ DEFAULT_SPREADSHEET_ID = "1W1FKPD-F5Fmq4it8vT9_2vFwZX_SgtkD6m0-bmBABaM"
 AUTO_SYNC_MINUTES = 5
 PRIMARY_WORKBOOK_NAME = "PLANILHA DE PRESCRIÇÕES - MÉDICOS JULIANA - Copiar.xlsx"
 UPLOADED_WORKBOOK_NAME = "cloud_primary_workbook.xlsx"
+MICROSOFT_WORKBOOK_URL_KEY = "microsoft_online_workbook_url"
+LAST_MICROSOFT_DOWNLOAD_KEY = "last_microsoft_download_at"
+LOCAL_WORKBOOK_PATH_KEY = "local_workbook_path"
+INCLUDED_WORKBOOK_SHEETS_KEY = "included_workbook_sheets"
+REMEMBERED_AUTH_USER_KEY = "remembered_auth_user"
 ONEDRIVE_CLOUDSTORAGE_DIR = Path.home() / "Library" / "CloudStorage"
 APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+PRODUCT_NAME = "OncoNavega"
+PRODUCT_TAGLINE = "Navegação oncológica para proteger ciclos, agenda e receita."
+PRODUCT_PROMISE = "Da planilha à fila prioritária: prescrição, autorização e agenda no mesmo fluxo."
 MONTH_LABELS_PT = {
     1: "janeiro",
     2: "fevereiro",
@@ -98,7 +111,7 @@ CHEMO_SESSION_COLUMNS = {
 
 
 st.set_page_config(
-    page_title="Navegação Oncológica",
+    page_title=PRODUCT_NAME,
     page_icon="stethoscope",
     layout="wide",
 )
@@ -120,12 +133,15 @@ html, body, [class*="css"] {
 }
 
 .hero {
-    background: linear-gradient(135deg, #0f3d4c 0%, #16697a 58%, #2e8fa3 100%);
+    background:
+        linear-gradient(135deg, rgba(11, 59, 72, 0.98) 0%, rgba(22, 105, 122, 0.98) 58%, rgba(42, 157, 143, 0.96) 100%);
     border-radius: 26px;
     color: #ffffff !important;
-    padding: 28px 30px;
+    padding: 30px 32px;
     box-shadow: 0 22px 48px rgba(15, 61, 76, 0.18);
     margin-bottom: 18px;
+    position: relative;
+    overflow: hidden;
 }
 
 .hero, .hero * {
@@ -134,7 +150,7 @@ html, body, [class*="css"] {
 
 .hero h1 {
     margin: 0;
-    font-size: 2.6rem;
+    font-size: 2.72rem;
     font-weight: 800;
     color: #ffffff !important;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
@@ -145,6 +161,93 @@ html, body, [class*="css"] {
     max-width: 940px;
     color: #f3fbff !important;
     line-height: 1.55;
+}
+
+.brand-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.brand-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    color: #ffffff;
+}
+
+.brand-kicker {
+    color: #d9fbff !important;
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.hero-pill {
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    color: #ffffff !important;
+    font-size: 0.86rem;
+    font-weight: 800;
+    padding: 8px 12px;
+}
+
+.product-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0 0 18px 0;
+}
+
+.product-proof {
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(15, 61, 76, 0.08);
+    border-radius: 18px;
+    padding: 14px 16px;
+    box-shadow: 0 12px 26px rgba(26, 55, 77, 0.06);
+}
+
+.product-proof-label {
+    color: #5b7681;
+    font-size: 0.78rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.product-proof-value {
+    color: #123847;
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin-top: 5px;
+}
+
+@media (max-width: 900px) {
+    .product-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .product-strip {
+        grid-template-columns: 1fr;
+    }
 }
 
 .login-shell {
@@ -304,10 +407,134 @@ html, body, [class*="css"] {
     margin-top: 4px;
 }
 
+.commercial-card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 61, 76, 0.08);
+    border-radius: 18px;
+    padding: 16px 18px;
+    min-height: 170px;
+    box-shadow: 0 12px 28px rgba(26, 55, 77, 0.07);
+}
+
+.commercial-card h3 {
+    color: #123847;
+    font-size: 1rem;
+    margin: 0 0 8px 0;
+    font-weight: 800;
+}
+
+.commercial-card p,
+.commercial-card li {
+    color: #45636f;
+    font-size: 0.92rem;
+    line-height: 1.48;
+}
+
+.commercial-card ul {
+    padding-left: 18px;
+    margin: 8px 0 0 0;
+}
+
+.price-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(239, 248, 251, 0.96) 100%);
+    border: 1px solid rgba(15, 61, 76, 0.10);
+    border-radius: 18px;
+    padding: 18px;
+    min-height: 255px;
+    box-shadow: 0 14px 32px rgba(26, 55, 77, 0.08);
+}
+
+.price-name {
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: #16697a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.price-value {
+    color: #123847;
+    font-size: 1.8rem;
+    font-weight: 800;
+    margin-top: 6px;
+}
+
+.price-note {
+    color: #5b7681;
+    font-size: 0.9rem;
+    margin: 4px 0 12px 0;
+}
+
+.sales-step {
+    border-left: 4px solid #16697a;
+    padding: 4px 0 4px 12px;
+    margin-bottom: 12px;
+}
+
+.sales-step-title {
+    color: #123847;
+    font-weight: 800;
+}
+
+.sales-step-copy {
+    color: #56707a;
+    font-size: 0.92rem;
+    margin-top: 2px;
+}
+
+.playbook-card {
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(15, 61, 76, 0.08);
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: 0 12px 28px rgba(26, 55, 77, 0.07);
+}
+
+.playbook-card h3 {
+    margin: 0 0 8px 0;
+    color: #123847;
+    font-size: 1.02rem;
+    font-weight: 800;
+}
+
+.playbook-card p,
+.playbook-card li {
+    color: #4f6d78;
+    font-size: 0.92rem;
+    line-height: 1.48;
+}
+
+.pilot-week {
+    background: #f7fbfd;
+    border: 1px solid rgba(15, 61, 76, 0.08);
+    border-left: 4px solid #2a9d8f;
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+
+.pilot-week-title {
+    color: #123847;
+    font-weight: 800;
+}
+
+.pilot-week-copy {
+    color: #56707a;
+    font-size: 0.92rem;
+    margin-top: 3px;
+}
+
+.calendar-scroll {
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+
 .calendar-grid {
     display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(150px, 1fr));
     gap: 10px;
+    min-width: 1120px;
 }
 
 .calendar-head {
@@ -320,12 +547,15 @@ html, body, [class*="css"] {
 }
 
 .calendar-day {
-    min-height: 138px;
+    min-height: 190px;
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid rgba(15, 61, 76, 0.08);
     border-radius: 18px;
     padding: 10px;
     box-shadow: 0 10px 24px rgba(26, 55, 77, 0.05);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .calendar-day.muted {
@@ -351,14 +581,58 @@ html, body, [class*="css"] {
     margin-bottom: 8px;
 }
 
-.calendar-item {
-    font-size: 0.8rem;
-    line-height: 1.35;
-    background: #e0f2f7;
-    color: #164e63;
+.calendar-events {
+    overflow: hidden;
+}
+
+.calendar-doctor-block {
+    border-left: 4px solid var(--doctor-color, #2a9d8f);
+    background: color-mix(in srgb, var(--doctor-color, #2a9d8f) 9%, #ffffff);
     border-radius: 12px;
-    padding: 6px 8px;
-    margin-bottom: 6px;
+    padding: 6px 7px;
+    margin-bottom: 7px;
+}
+
+.calendar-doctor-group {
+    font-size: 0.66rem;
+    font-weight: 800;
+    color: var(--doctor-color, #2a9d8f);
+    letter-spacing: 0.01em;
+    margin: 0 0 4px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.calendar-patient-link {
+    display: block;
+    color: #123847 !important;
+    font-size: 0.73rem;
+    font-weight: 800;
+    line-height: 1.2;
+    text-decoration: none !important;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(15, 61, 76, 0.07);
+    border-radius: 9px;
+    padding: 5px 6px;
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+}
+
+.calendar-patient-link:hover {
+    background: #ffffff;
+    border-color: rgba(15, 61, 76, 0.18);
+}
+
+.calendar-more {
+    display: inline-block;
+    background: #eef2f5;
+    color: #4b6370;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border-radius: 999px;
+    padding: 4px 7px;
+    margin-top: 3px;
 }
 
 .calendar-item.more {
@@ -384,14 +658,6 @@ html, body, [class*="css"] {
     margin-bottom: 0;
 }
 
-.calendar-doctor-group {
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: #5b7681;
-    letter-spacing: 0.01em;
-    margin: 6px 0 3px 2px;
-}
-
 .stApp, .stApp p, .stApp span, .stApp label {
     color: #123847;
 }
@@ -412,6 +678,7 @@ html, body, [class*="css"] {
 }
 
 .stSelectbox > div > div,
+.stMultiSelect > div > div,
 .stDateInput > div > div,
 .stTextInput > div > div,
 .stTextArea textarea {
@@ -425,12 +692,91 @@ input::placeholder {
     color: #6b7f88 !important;
 }
 
+.stMultiSelect [data-baseweb="tag"] {
+    background: #e7f4f7 !important;
+    border: 1px solid rgba(15, 61, 76, 0.16) !important;
+    border-radius: 10px !important;
+    color: #123847 !important;
+}
+
+.stMultiSelect [data-baseweb="tag"] span,
+.stMultiSelect [data-baseweb="tag"] p,
+.stMultiSelect [data-baseweb="tag"] div {
+    color: #123847 !important;
+    font-weight: 800 !important;
+}
+
+.stMultiSelect [data-baseweb="tag"] svg {
+    fill: #31556a !important;
+}
+
+.stMultiSelect [data-baseweb="select"] input {
+    color: #123847 !important;
+}
+
+.stMultiSelect svg {
+    fill: #31556a !important;
+}
+
 .stCheckbox [data-baseweb="checkbox"] {
     background: #ffffff !important;
 }
 
 .stCheckbox svg {
     fill: #0f4c5c !important;
+}
+
+[data-testid="stTabs"] {
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(15, 61, 76, 0.08);
+    border-radius: 18px;
+    padding: 8px 10px 12px 10px;
+    box-shadow: 0 12px 26px rgba(26, 55, 77, 0.06);
+}
+
+[data-testid="stTabs"] [role="tablist"] {
+    gap: 6px;
+    border-bottom: 1px solid rgba(15, 61, 76, 0.10);
+    padding-bottom: 8px;
+}
+
+[data-testid="stTabs"] [role="tab"] {
+    background: #f6fbfd !important;
+    border: 1px solid rgba(15, 61, 76, 0.12) !important;
+    border-radius: 999px !important;
+    color: #214755 !important;
+    min-height: 38px !important;
+    padding: 7px 13px !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stTabs"] [role="tab"] p {
+    color: #214755 !important;
+    font-weight: 800 !important;
+    font-size: 0.86rem !important;
+}
+
+[data-testid="stTabs"] [role="tab"]:hover {
+    background: #e8f4f8 !important;
+    border-color: rgba(15, 61, 76, 0.18) !important;
+}
+
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: linear-gradient(135deg, #0f3d4c 0%, #16697a 100%) !important;
+    border-color: rgba(15, 61, 76, 0.34) !important;
+    box-shadow: 0 10px 18px rgba(15, 61, 76, 0.16) !important;
+}
+
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] p {
+    color: #ffffff !important;
+}
+
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    display: none !important;
+}
+
+[data-testid="stTabs"] [role="tabpanel"] {
+    padding-top: 18px;
 }
 
 .stButton button:not([kind="tertiary"]),
@@ -481,6 +827,29 @@ input::placeholder {
 [data-testid="stButton"] button[kind="tertiary"] span {
     color: #0f4c5c !important;
 }
+
+.hero p,
+.hero span,
+.hero div,
+.hero h1 {
+    color: #ffffff !important;
+}
+
+.hero .brand-kicker {
+    color: #d9fbff !important;
+}
+
+@media (max-width: 560px) {
+    .hero {
+        padding: 26px 24px;
+        border-radius: 22px;
+    }
+
+    .hero h1 {
+        font-size: 2.18rem;
+        line-height: 1.16;
+    }
+}
 </style>
 """
 
@@ -512,6 +881,66 @@ def authenticate_access(username: str, password: str) -> bool:
     return username.strip().lower() == credentials["username"].strip().lower() and password == credentials["password"]
 
 
+def build_auth_token(username: str) -> str:
+    credentials = load_access_credentials()
+    secret = os.getenv("ONCO_APP_AUTH_SECRET") or credentials["password"]
+    message = f"{credentials['username'].strip().lower()}:{username.strip().lower()}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def restore_auth_from_query_params() -> None:
+    if st.session_state.get("auth_user"):
+        return
+    remembered_user = get_app_state(REMEMBERED_AUTH_USER_KEY)
+    if remembered_user:
+        st.session_state["auth_user"] = remembered_user
+        return
+    auth_user = read_query_param("auth_user")
+    auth_token = read_query_param("auth_token")
+    if not auth_user or not auth_token:
+        return
+    expected_token = build_auth_token(auth_user)
+    if hmac.compare_digest(auth_token, expected_token):
+        st.session_state["auth_user"] = auth_user.strip()
+
+
+def ensure_persistent_auth_query_params() -> None:
+    auth_user = st.session_state.get("auth_user")
+    if not auth_user:
+        return
+    current_user = read_query_param("auth_user")
+    current_token = read_query_param("auth_token")
+    expected_token = build_auth_token(str(auth_user))
+    if current_user != str(auth_user) or current_token != expected_token:
+        persist_auth_in_query_params(str(auth_user))
+        components.html(
+            f"""
+            <script>
+                const url = new URL(window.parent.location.href);
+                url.searchParams.set("auth_user", {json.dumps(str(auth_user))});
+                url.searchParams.set("auth_token", {json.dumps(expected_token)});
+                window.parent.history.replaceState(null, "", url.toString());
+            </script>
+            """,
+            height=0,
+        )
+
+
+def persist_auth_in_query_params(username: str) -> None:
+    st.query_params.update(
+        {
+            "auth_user": username.strip(),
+            "auth_token": build_auth_token(username),
+        }
+    )
+
+
+def clear_auth_query_params() -> None:
+    for key in ["auth_user", "auth_token"]:
+        if key in st.query_params:
+            del st.query_params[key]
+
+
 def ensure_auth_session_state() -> None:
     if "auth_user" not in st.session_state:
         st.session_state["auth_user"] = None
@@ -539,9 +968,16 @@ def render_login_gate() -> None:
             }
         </style>
         <div class="hero">
-            <h1 style="color:#ffffff !important;">Navegação Oncológica</h1>
+            <div class="brand-row">
+                <div class="brand-mark">ON</div>
+                <div>
+                    <div class="brand-kicker">OncoNavega</div>
+                    <div style="color:#d9fbff !important; font-weight:700;">Navegação oncológica operacional</div>
+                </div>
+            </div>
+            <h1 style="color:#ffffff !important;">Proteja ciclos, agenda e receita.</h1>
             <p style="color:#f3fbff !important;">
-                Acesso web protegido para acompanhar agenda, ciclos e autorizações dos pacientes.
+                Acesso protegido para organizar prescrição, autorização e agendamento dos pacientes em tratamento oncológico.
             </p>
         </div>
         """,
@@ -558,7 +994,10 @@ def render_login_gate() -> None:
         submitted = st.form_submit_button("Entrar", use_container_width=True)
         if submitted:
             if authenticate_access(username, password):
-                st.session_state["auth_user"] = username.strip()
+                normalized_username = username.strip()
+                st.session_state["auth_user"] = normalized_username
+                set_app_state(REMEMBERED_AUTH_USER_KEY, normalized_username)
+                persist_auth_in_query_params(normalized_username)
                 st.success("Acesso liberado.")
                 st.rerun()
             else:
@@ -691,6 +1130,13 @@ def get_app_state(key: str) -> str | None:
     ).fetchone()
     conn.close()
     return row["value"] if row else None
+
+
+def delete_app_state(key: str) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM app_state WHERE key = ?", (key,))
+    conn.commit()
+    conn.close()
 
 
 def parse_date(value: str | None) -> date | None:
@@ -851,6 +1297,12 @@ def detect_sheet_header_and_rows(values: list[list[str]]) -> tuple[list[str], li
 
 
 def find_primary_workbook_file() -> Path | None:
+    local_workbook_path = get_app_state(LOCAL_WORKBOOK_PATH_KEY)
+    if local_workbook_path:
+        local_path = clean_local_workbook_path(local_workbook_path)
+        if local_path.exists() and local_path.suffix.lower() == ".xlsx":
+            return local_path
+
     uploaded_override = DATA_DIR / UPLOADED_WORKBOOK_NAME
     if uploaded_override.exists():
         return uploaded_override
@@ -876,6 +1328,99 @@ def save_uploaded_primary_workbook(uploaded_file) -> Path:
     target = DATA_DIR / UPLOADED_WORKBOOK_NAME
     target.write_bytes(uploaded_file.getbuffer())
     return target
+
+
+def clean_local_workbook_path(value: str) -> Path:
+    cleaned = (value or "").strip().strip("\"'")
+    return Path(cleaned).expanduser()
+
+
+def microsoft_download_candidates(shared_url: str) -> list[str]:
+    url = shared_url.strip()
+    if not url:
+        return []
+
+    candidates: list[str] = []
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    host = parsed.netloc.lower()
+    path = parsed.path
+
+    if "onedrive.live.com" in host and "resid" in query:
+        download_query = {"resid": query["resid"][0]}
+        if "authkey" in query:
+            download_query["authkey"] = query["authkey"][0]
+        candidates.append(f"https://onedrive.live.com/download?{urlencode(download_query)}")
+
+    if "sharepoint.com" in host:
+        if "sourcedoc" in query:
+            candidates.append(f"{parsed.scheme}://{parsed.netloc}/_layouts/15/download.aspx?{urlencode({'UniqueId': query['sourcedoc'][0].strip('{}')})}")
+
+        if "/:x:/r/" in path:
+            source_path = unquote(path.split("/:x:/r", 1)[1])
+            candidates.append(
+                f"{parsed.scheme}://{parsed.netloc}/_layouts/15/download.aspx?{urlencode({'SourceUrl': source_path})}"
+            )
+            candidates.append(
+                f"{parsed.scheme}://{parsed.netloc}/_layouts/15/download.aspx?SourceUrl={quote(source_path, safe='/')}"
+            )
+
+    separator = "&" if parsed.query else "?"
+    if "download=1" not in parsed.query.lower():
+        candidates.append(f"{url}{separator}download=1")
+
+    if url not in candidates:
+        candidates.append(url)
+
+    return candidates
+
+
+def download_microsoft_workbook(shared_url: str) -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    last_error: Exception | None = None
+
+    for candidate_url in microsoft_download_candidates(shared_url):
+        try:
+            request = Request(
+                candidate_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 OncoNavega/1.0",
+                    "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
+                },
+            )
+            with urlopen(request, timeout=30) as response:
+                content = response.read()
+                content_type = response.headers.get("content-type", "")
+        except Exception as exc:
+            last_error = exc
+            continue
+
+        if len(content) < 200 or content[:2] != b"PK":
+            last_error = ValueError(
+                "O link respondeu uma página web em vez de um arquivo .xlsx. "
+                "No Excel Online, use Compartilhar > Qualquer pessoa com o link pode exibir, "
+                "ou crie um link de download."
+            )
+            if "html" in content_type.lower():
+                continue
+            continue
+
+        target = DATA_DIR / UPLOADED_WORKBOOK_NAME
+        target.write_bytes(content)
+        set_app_state(MICROSOFT_WORKBOOK_URL_KEY, shared_url.strip())
+        set_app_state(LAST_MICROSOFT_DOWNLOAD_KEY, datetime.now(APP_TIMEZONE).isoformat(timespec="seconds"))
+        return target
+
+    if last_error:
+        raise last_error
+    raise ValueError("Informe um link compartilhado do Excel Online, OneDrive ou SharePoint.")
+
+
+def refresh_microsoft_workbook_if_configured() -> Path | None:
+    workbook_url = get_app_state(MICROSOFT_WORKBOOK_URL_KEY)
+    if not workbook_url:
+        return None
+    return download_microsoft_workbook(workbook_url)
 
 
 def column_index_to_letter(index: int) -> str:
@@ -919,6 +1464,24 @@ def get_google_sheet_titles(service, spreadsheet_id: str) -> list[str]:
 def get_workbook_doctor_sheet_titles(workbook_path: Path) -> list[str]:
     excel_file = pd.ExcelFile(workbook_path)
     return [title for title in excel_file.sheet_names if title.startswith(("Dr.", "Dra."))]
+
+
+def get_included_workbook_sheets(available_sheets: list[str]) -> list[str]:
+    raw_value = get_app_state(INCLUDED_WORKBOOK_SHEETS_KEY)
+    if not raw_value:
+        return available_sheets
+    try:
+        selected = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return available_sheets
+    if not isinstance(selected, list):
+        return available_sheets
+    valid = [sheet for sheet in selected if sheet in available_sheets]
+    return valid or available_sheets
+
+
+def set_included_workbook_sheets(sheet_names: list[str]) -> None:
+    set_app_state(INCLUDED_WORKBOOK_SHEETS_KEY, json.dumps(sheet_names, ensure_ascii=False))
 
 
 def extract_dates_from_text(value: object) -> list[date]:
@@ -1451,7 +2014,8 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
     if workbook_path is None:
         raise FileNotFoundError("Planilha principal .xlsx não encontrada na pasta do projeto.")
 
-    doctor_sheets = get_workbook_doctor_sheet_titles(workbook_path)
+    available_doctor_sheets = get_workbook_doctor_sheet_titles(workbook_path)
+    doctor_sheets = get_included_workbook_sheets(available_doctor_sheets)
     conn = get_connection()
     existing_patient_state = {
         (row["source_sheet_name"], int(row["source_row_number"])): {
@@ -1730,6 +2294,90 @@ def abbreviate_patient_name(name: str) -> str:
     return " ".join([parts[0], *middle, parts[-1]])
 
 
+DOCTOR_COLOR_PALETTE = [
+    "#0f766e",
+    "#1d4ed8",
+    "#b45309",
+    "#be123c",
+    "#7c3aed",
+    "#047857",
+    "#0e7490",
+    "#a21caf",
+    "#c2410c",
+]
+
+DOCTOR_COLOR_OVERRIDES = {
+    "dr_rafael_schmerling": "#1d4ed8",
+    "dra_carolina_kawamura": "#be123c",
+    "dra_cynthia_lemos": "#0f766e",
+    "dra_juliana_pimenta_e_buzaid": "#7c3aed",
+    "dr_tiago_kenji": "#b45309",
+    "dr_marcos_magalhaes_e_buzaid": "#0e7490",
+}
+
+
+def doctor_calendar_color(doctor_name: str) -> str:
+    normalized = normalize_header(doctor_name)
+    if normalized in DOCTOR_COLOR_OVERRIDES:
+        return DOCTOR_COLOR_OVERRIDES[normalized]
+    if not normalized:
+        return DOCTOR_COLOR_PALETTE[0]
+    color_index = sum(ord(char) for char in normalized) % len(DOCTOR_COLOR_PALETTE)
+    return DOCTOR_COLOR_PALETTE[color_index]
+
+
+def calendar_patient_url(patient_id: int, cycle_date: date) -> str:
+    return "?" + urlencode(
+        {
+            "view": "patient_detail",
+            "patient_id": str(patient_id),
+            "cycle_date": cycle_date.strftime(DATE_FMT),
+        }
+    )
+
+
+def render_calendar_day_html(cell_date: date, in_month: bool, group: pd.DataFrame | None) -> str:
+    count = 0 if group is None else len(group)
+    day_classes = "calendar-day" if in_month else "calendar-day muted"
+    count_html = f'<span class="calendar-count">{count} infusao(oes)</span>' if count else ""
+    event_blocks: list[str] = []
+
+    if group is not None and not group.empty:
+        sorted_group = group.sort_values(["doctor_name", "patient_name"])
+        shown_events = 0
+        max_events = 7
+        for doctor_name, doctor_group in sorted_group.groupby("doctor_name", sort=False):
+            if shown_events >= max_events:
+                break
+            color = doctor_calendar_color(str(doctor_name))
+            patient_links = []
+            for _, event in doctor_group.iterrows():
+                if shown_events >= max_events:
+                    break
+                patient_name = html.escape(abbreviate_patient_name(str(event["patient_name"])))
+                patient_url = html.escape(calendar_patient_url(int(event["patient_id"]), event["scheduled_date"]))
+                patient_links.append(f'<a class="calendar-patient-link" href="{patient_url}">{patient_name}</a>')
+                shown_events += 1
+            if patient_links:
+                safe_doctor = html.escape(str(doctor_name))
+                event_blocks.append(
+                    f'<div class="calendar-doctor-block" style="--doctor-color:{color};">'
+                    f'<div class="calendar-doctor-group">{safe_doctor}</div>'
+                    f'{"".join(patient_links)}</div>'
+                )
+        remaining = count - shown_events
+        if remaining > 0:
+            event_blocks.append(f'<div class="calendar-more">+{remaining} mais</div>')
+
+    return (
+        f'<div class="{day_classes}">'
+        f'<div class="calendar-date">{cell_date.day}</div>'
+        f'{count_html}'
+        f'<div class="calendar-events">{"".join(event_blocks)}</div>'
+        f'</div>'
+    )
+
+
 def render_calendar_patient_detail_page(filtered_patients: pd.DataFrame, filtered_sessions: pd.DataFrame) -> None:
     selected_patient_id = st.session_state.get("selected_calendar_patient_id")
     if not selected_patient_id:
@@ -2000,82 +2648,17 @@ def render_calendar_panel(
         for projected_date, group in month_projection.groupby("scheduled_date")
     }
 
-    header_cols = st.columns(7)
-    for idx, day_name in enumerate(["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"]):
-        with header_cols[idx]:
-            st.markdown(
-                f"""
-                <div style="
-                    color:#1f2937;
-                    font-size:0.85rem;
-                    font-weight:800;
-                    text-transform:uppercase;
-                    letter-spacing:0.05em;
-                    padding:4px 2px 8px 2px;
-                ">
-                    {day_name}
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    day_headers = "".join(f'<div class="calendar-head">{day_name}</div>' for day_name in ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"])
+    day_cells = []
+    for slot in range(total_slots):
+        cell_date = month_start - timedelta(days=start_offset) + timedelta(days=slot)
+        in_month = month_start <= cell_date <= month_end
+        day_cells.append(render_calendar_day_html(cell_date, in_month, day_map.get(cell_date)))
 
-    for week_start in range(0, total_slots, 7):
-        week_cols = st.columns(7)
-        for day_offset in range(7):
-            slot = week_start + day_offset
-            cell_date = month_start - timedelta(days=start_offset) + timedelta(days=slot)
-            in_month = month_start <= cell_date <= month_end
-            group = day_map.get(cell_date)
-            count = 0 if group is None else len(group)
-            bg_color = "rgba(255, 255, 255, 0.92)" if in_month else "rgba(245, 248, 250, 0.92)"
-            date_color = "#123847" if in_month else "#8aa0a8"
-            with week_cols[day_offset]:
-                st.markdown(
-                    f"""
-                    <div style="
-                        min-height: 168px;
-                        background: {bg_color};
-                        border: 1px solid rgba(15, 61, 76, 0.08);
-                        border-radius: 18px;
-                        padding: 10px;
-                        box-shadow: 0 10px 24px rgba(26, 55, 77, 0.05);
-                        margin-bottom: 10px;
-                    ">
-                        <div style="font-size:0.92rem; font-weight:800; color:{date_color}; margin-bottom:8px;">
-                            {cell_date.day}
-                        </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                if count:
-                    st.markdown(
-                        f"""
-                        <div style="
-                            display:inline-block;
-                            font-size:0.76rem;
-                            font-weight:800;
-                            color:#9a3412;
-                            background:#ffedd5;
-                            border-radius:999px;
-                            padding:4px 8px;
-                            margin-bottom:8px;
-                        ">
-                            {count} infusao(oes)
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    for doctor_name, doctor_group in group.sort_values(["doctor_name", "patient_name"]).groupby("doctor_name"):
-                        st.markdown(f'<div class="calendar-doctor-group">{doctor_name}</div>', unsafe_allow_html=True)
-                        for _, event in doctor_group.iterrows():
-                            render_patient_link_card(
-                                int(event["patient_id"]),
-                                str(event["patient_name"]),
-                                str(event["doctor_name"]),
-                                event["scheduled_date"],
-                                show_doctor_name=False,
-                            )
-                st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="calendar-scroll"><div class="calendar-grid">{day_headers}{"".join(day_cells)}</div></div>',
+        unsafe_allow_html=True,
+    )
 
     if show_month_list:
         st.markdown("")
@@ -2511,6 +3094,694 @@ def render_dashboard(
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd.DataFrame) -> None:
+    active_patients = len(filtered_patients)
+    monthly_sessions = 0
+    if not filtered_sessions.empty:
+        sessions_df = filtered_sessions.copy()
+        sessions_df["scheduled_dt"] = pd.to_datetime(sessions_df["scheduled_date"], errors="coerce")
+        today = pd.Timestamp(date.today())
+        next_30_days = today + pd.Timedelta(days=30)
+        monthly_sessions = int(sessions_df["scheduled_dt"].between(today, next_30_days).sum())
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        render_metric("Entrada", "Profissional", "Navegador ou coordenador sente a dor e puxa o uso.", "metric-a")
+    with col2:
+        render_metric("Carteira no filtro", str(active_patients), "Base atual usada para dimensionar proposta.", "metric-d")
+    with col3:
+        render_metric("Infusões em 30 dias", str(monthly_sessions), "Volume ajuda a calcular ganho operacional.", "metric-b")
+    with col4:
+        render_metric("Receita principal", "Clínica", "Contrato institucional com usuários, governança e ROI.", "metric-protocol")
+
+    st.markdown("")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Estratégia: profissional adota, clínica contrata</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="subtle">
+            O profissional de navegação sente a dor todos os dias e pode começar usando o app para organizar
+            a própria carteira. A clínica compra quando percebe que precisa centralizar os dados, liberar acesso
+            para a equipe, padronizar o processo e proteger agenda, receita e governança.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    product_page_html = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{PRODUCT_NAME} - Navegação oncológica operacional</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Arial, sans-serif; background: #f5fafb; color: #123847; line-height: 1.5; }}
+    main {{ max-width: 1040px; margin: 0 auto; padding: 34px 24px 46px; }}
+    .hero {{ background: linear-gradient(135deg, #0f3d4c 0%, #16697a 58%, #2a9d8f 100%); color: white; border-radius: 24px; padding: 36px; box-shadow: 0 22px 48px rgba(15,61,76,.16); }}
+    .brand {{ display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }}
+    .mark {{ width: 46px; height: 46px; border-radius: 15px; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.25); display: flex; align-items: center; justify-content: center; font-weight: 800; }}
+    .kicker {{ color: #d9fbff; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 800; }}
+    h1 {{ margin: 0; font-size: 38px; line-height: 1.08; max-width: 780px; }}
+    .hero p {{ max-width: 760px; color: #eefcff; }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }}
+    .chip {{ border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.14); border-radius: 999px; padding: 8px 12px; font-weight: 700; }}
+    .grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }}
+    section {{ background: white; border: 1px solid #dce9ee; border-radius: 18px; padding: 22px; margin-top: 18px; }}
+    h2 {{ margin: 0 0 10px 0; color: #0f3d4c; }}
+    .card h3 {{ margin: 0 0 8px 0; color: #123847; }}
+    .price {{ font-size: 28px; font-weight: 800; color: #0f3d4c; margin: 8px 0; }}
+    li {{ margin: 6px 0; }}
+    @media (max-width: 820px) {{ .grid {{ grid-template-columns: 1fr; }} h1 {{ font-size: 30px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="hero">
+      <div class="brand">
+        <div class="mark">ON</div>
+        <div>
+          <div class="kicker">{PRODUCT_NAME}</div>
+          <div>{PRODUCT_PROMISE}</div>
+        </div>
+      </div>
+      <h1>{PRODUCT_TAGLINE}</h1>
+      <p>Produto para clínicas e profissionais de navegação que precisam transformar planilhas, mensagens e cobranças soltas em uma operação rastreável por ciclo.</p>
+      <div class="chips">
+        <div class="chip">Fila prioritária</div>
+        <div class="chip">Agenda de infusão</div>
+        <div class="chip">Autorização e prescrição</div>
+        <div class="chip">Relatório para gestão</div>
+      </div>
+    </div>
+    <section>
+      <h2>Para quem é</h2>
+      <div class="grid">
+        <div class="card"><h3>Profissional navegador</h3><p>Organiza a carteira, prioriza cobranças e leva um resumo claro para a clínica.</p></div>
+        <div class="card"><h3>Clínica oncológica</h3><p>Centraliza operação, reduz ciclos em risco e ganha governança sobre agenda e autorizações.</p></div>
+        <div class="card"><h3>Gestão e faturamento</h3><p>Enxerga gargalos antes que virem atraso, retrabalho ou perda de previsibilidade.</p></div>
+      </div>
+    </section>
+    <section>
+      <h2>Oferta inicial</h2>
+      <div class="grid">
+        <div class="card"><h3>Profissional</h3><div class="price">R$ 99 a R$ 299/mês</div><p>Carteira individual, alertas e resumo para apresentar à clínica.</p></div>
+        <div class="card"><h3>Clínica</h3><div class="price">R$ 1,5k a R$ 6k/mês</div><p>Multiusuário, relatórios, suporte, backup e governança.</p></div>
+        <div class="card"><h3>Piloto de 45 dias</h3><div class="price">R$ 3k a R$ 8k</div><p>Implantação assistida, relatório semanal e reunião de fechamento.</p></div>
+      </div>
+    </section>
+    <section>
+      <h2>Como prova valor</h2>
+      <ul>
+        <li>Mostra pacientes com risco de atraso por prescrição, autorização ou agenda.</li>
+        <li>Converte a carteira em fila operacional de ação diária.</li>
+        <li>Ancora a mensalidade em ciclos protegidos e receita operacional preservada.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
+"""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Kit de produto</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="subtle">{PRODUCT_NAME} agora tem nome, promessa, oferta inicial e uma one-page comercial para abrir conversa com clínicas e profissionais.</div>',
+        unsafe_allow_html=True,
+    )
+    st.download_button(
+        "Baixar one-page do produto",
+        data=product_page_html,
+        file_name="onconavega_one_page.html",
+        mime="text/html",
+        use_container_width=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    mode_left, mode_right = st.columns([0.9, 1.1])
+    with mode_left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Modo de venda</div>', unsafe_allow_html=True)
+        commercial_mode = st.radio(
+            "Escolha o discurso principal",
+            ["Profissional navegador", "Clínica / gestor"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if commercial_mode == "Profissional navegador":
+            mode_pitch = (
+                "Organize sua carteira em um lugar só e gere um resumo objetivo para mostrar à clínica "
+                "onde existem riscos de prescrição, autorização, agenda e próximo ciclo."
+            )
+            mode_cta = "Comece com o plano profissional e use a apresentação externa para abrir a conversa interna."
+            mode_bullets = [
+                "Menos dependência de planilhas soltas.",
+                "Mais clareza sobre quem cobrar hoje.",
+                "Material pronto para pedir apoio da clínica.",
+            ]
+        else:
+            mode_pitch = (
+                "Centralize a operação de navegação oncológica, reduza ciclos em risco e acompanhe a agenda "
+                "com indicadores para gestão, médicos, navegação e faturamento."
+            )
+            mode_cta = "Contrate um piloto institucional de 45 dias com meta operacional e relatório semanal."
+            mode_bullets = [
+                "Multiusuário e governança dos dados.",
+                "Fila prioritária por risco operacional.",
+                "ROI ancorado em receita preservada.",
+            ]
+        st.markdown("</div>", unsafe_allow_html=True)
+    with mode_right:
+        bullet_html = "".join(f"<li>{item}</li>" for item in mode_bullets)
+        st.markdown(
+            f"""
+            <div class="playbook-card">
+                <h3>{commercial_mode}</h3>
+                <p>{mode_pitch}</p>
+                <ul>{bullet_html}</ul>
+                <p><strong>Próxima ação:</strong> {mode_cta}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("")
+    fit_cols = st.columns(3)
+    commercial_cards = [
+        (
+            "Porta de entrada",
+            [
+                "Navegadora oncológica, enfermeira coordenadora ou secretária especializada.",
+                "Profissional que acompanha carteiras em uma ou mais clínicas.",
+                "Uso inicial com dados mínimos, autorizados ou anonimizados.",
+            ],
+        ),
+        (
+            "Momento de conversão",
+            [
+                "O profissional mostra uma fila real de pendências para a gestão.",
+                "A clínica vê risco de atraso, autorização e agenda em um painel simples.",
+                "O gestor entende que o problema é institucional, não individual.",
+            ],
+        ),
+        (
+            "Contrato que sustenta",
+            [
+                "Plano clínica com multiusuário, relatórios e governança.",
+                "Implantação com a planilha atual e rotina da equipe.",
+                "Mensalidade ancorada em receita preservada e menor retrabalho.",
+            ],
+        ),
+    ]
+    for column, (title, bullets) in zip(fit_cols, commercial_cards):
+        with column:
+            bullet_html = "".join(f"<li>{item}</li>" for item in bullets)
+            st.markdown(
+                f"""
+                <div class="commercial-card">
+                    <h3>{title}</h3>
+                    <ul>{bullet_html}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("")
+    price_cols = st.columns(3)
+    price_cards = [
+        (
+            "Profissional",
+            "R$ 99 a R$ 299",
+            "por usuário/mês",
+            ["Carteira individual", "Alertas e calendário", "Resumo para apresentar à clínica"],
+        ),
+        (
+            "Clínica",
+            "R$ 1,5k a R$ 6k",
+            "por unidade/mês",
+            ["Multiusuário e perfis", "Relatórios gerenciais", "Suporte, backup e governança"],
+        ),
+        (
+            "Implantação",
+            "R$ 15k+",
+            "setup, treino e integrações",
+            ["Carga de base e planilhas", "Desenho da rotina operacional", "Integração com agenda, BI ou ERP"],
+        ),
+    ]
+    for column, (name, value, note, bullets) in zip(price_cols, price_cards):
+        with column:
+            bullet_html = "".join(f"<li>{item}</li>" for item in bullets)
+            st.markdown(
+                f"""
+                <div class="price-card">
+                    <div class="price-name">{name}</div>
+                    <div class="price-value">{value}</div>
+                    <div class="price-note">{note}</div>
+                    <ul>{bullet_html}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("")
+    funnel_left, funnel_right = st.columns([1, 1])
+    with funnel_left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Convite interno para a clínica</div>', unsafe_allow_html=True)
+        pending_patients = 0
+        if not filtered_patients.empty:
+            operational = build_operational_table(filtered_patients)
+            pending_patients = int(
+                (
+                    (operational["Severidade operacional"] > 0)
+                    | (operational["Severidade protocolo"] > 0)
+                ).sum()
+            )
+        external_presentation = f"""# Apresentação Externa - {PRODUCT_NAME}
+
+{PRODUCT_TAGLINE}
+
+## Oportunidade identificada
+
+Minha carteira acompanha {active_patients} paciente(s) ativo(s), com {monthly_sessions} infusão(ões) previstas nos próximos 30 dias.
+
+Neste momento, {pending_patients} paciente(s) têm algum ponto de atenção operacional ou de protocolo, como prescrição, autorização, agendamento ou janela do próximo ciclo.
+
+## Por que isso importa para a clínica
+
+Quando esses pontos ficam espalhados em planilhas, mensagens e memória da equipe, a clínica corre risco de atraso de ciclo, retrabalho administrativo, pior experiência do paciente e perda de previsibilidade da agenda de infusão.
+
+## Proposta
+
+Usar o {PRODUCT_NAME} como ferramenta institucional para centralizar a carteira, acompanhar pendências por ciclo, priorizar pacientes em risco e dar visibilidade para navegação, médicos, faturamento e gestão.
+
+## Próximo passo sugerido
+
+Fazer um piloto institucional de 30 a 60 dias, com uma meta simples:
+
+- reduzir ciclos com pendência perto da data de infusão
+- antecipar cobranças de prescrição e autorização
+- melhorar previsibilidade da agenda
+- gerar um relatório semanal de gargalos operacionais
+
+## Modelo comercial
+
+- Plano clínica: R$ 1.500 a R$ 6.000 por unidade/mês
+- Implantação assistida: R$ 3.000 a R$ 8.000 no piloto
+- Integrações e expansão: orçamento conforme escopo
+"""
+        st.markdown(
+            f"""
+            <div class="subtle">
+                Minha carteira tem {active_patients} paciente(s) ativos e {monthly_sessions} infusão(ões)
+                previstas nos próximos 30 dias. Hoje existem {pending_patients} paciente(s) com algum ponto
+                de atenção operacional ou de protocolo. Se a clínica contratar o plano institucional, a equipe
+                passa a acompanhar isso com acesso compartilhado, rotina padronizada e relatórios para gestão.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Apresentação Externa", use_container_width=True):
+            st.session_state["external_presentation_text"] = external_presentation
+        if st.session_state.get("external_presentation_text"):
+            st.text_area(
+                "Texto pronto para enviar",
+                st.session_state["external_presentation_text"],
+                height=360,
+            )
+            st.download_button(
+                "Baixar apresentação externa",
+                data=st.session_state["external_presentation_text"],
+                file_name="apresentacao_externa_navegacao_oncologica.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with funnel_right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Regras comerciais para dados sensíveis</div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="subtle">
+                Para uso profissional individual, trabalhe com autorização da clínica ou com dados mínimos:
+                iniciais, datas, status e códigos internos. Dados identificáveis e acesso multiusuário devem
+                migrar para o plano clínica, com responsável institucional, controle de acesso e rotina de backup.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    outreach_left, outreach_right = st.columns([1, 1])
+    whatsapp_message = f"""Olá, tudo bem?
+
+Estou organizando a navegação oncológica com o {PRODUCT_NAME}, um produto simples que mostra carteira, próximos ciclos, pendências de prescrição, autorização e agenda.
+
+Na carteira analisada hoje temos {active_patients} paciente(s) ativo(s), {monthly_sessions} infusão(ões) nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
+
+Acho que vale uma conversa rápida para avaliar um piloto de 45 dias na clínica, com relatório semanal de gargalos e foco em reduzir risco de atraso de ciclo.
+"""
+    email_message = f"""Assunto: Piloto de navegação oncológica para reduzir atrasos de ciclo
+
+Olá,
+
+Estou estruturando o {PRODUCT_NAME} para dar visibilidade aos próximos ciclos, pendências de prescrição, autorização do convênio e agendamento de quimioterapia.
+
+Na carteira analisada, temos {active_patients} paciente(s) ativo(s), {monthly_sessions} infusão(ões) previstas nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
+
+Minha sugestão é fazermos um piloto institucional de 45 dias, com:
+
+- carga da planilha atual
+- fila prioritária de pacientes em risco
+- acompanhamento de prescrição, autorização e agenda
+- relatório semanal de gargalos
+- reunião de fechamento com indicadores e próximos passos
+
+O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agenda e dar mais governança para navegação, médicos, faturamento e gestão.
+"""
+    with outreach_left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Mensagem rápida para WhatsApp</div>', unsafe_allow_html=True)
+        st.text_area("WhatsApp", whatsapp_message, height=210, label_visibility="collapsed")
+        st.download_button(
+            "Baixar mensagem WhatsApp",
+            data=whatsapp_message,
+            file_name="mensagem_whatsapp_navegacao_oncologica.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with outreach_right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">E-mail de abordagem</div>', unsafe_allow_html=True)
+        st.text_area("E-mail", email_message, height=210, label_visibility="collapsed")
+        st.download_button(
+            "Baixar e-mail de abordagem",
+            data=email_message,
+            file_name="email_abordagem_navegacao_oncologica.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Pacote de piloto de 45 dias</div>', unsafe_allow_html=True)
+    pilot_cols = st.columns(3)
+    pilot_steps = [
+        ("Semana 1", "Carga da planilha, ajuste dos campos e definição dos indicadores do piloto."),
+        ("Semanas 2-3", "Uso assistido da fila prioritária, calendário e pendências por ciclo."),
+        ("Semanas 4-5", "Relatórios semanais de gargalos, atrasos evitáveis e oportunidades de processo."),
+        ("Semana 6", "Reunião de fechamento com ROI estimado, decisão de assinatura e próximos incrementos."),
+        ("Entregáveis", "Painel em uso, rotina documentada, proposta de contrato mensal e backlog de melhorias."),
+        ("Meta do piloto", "Reduzir ciclos em risco e provar valor antes da contratação mensal."),
+    ]
+    for index, (title, copy) in enumerate(pilot_steps):
+        with pilot_cols[index % 3]:
+            st.markdown(
+                f"""
+                <div class="pilot-week">
+                    <div class="pilot-week-title">{title}</div>
+                    <div class="pilot-week-copy">{copy}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    calc_left, calc_right = st.columns([1, 1.2])
+    with calc_left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Simulador de ROI para venda</div>', unsafe_allow_html=True)
+        patients_input = st.number_input("Pacientes ativos na clínica", min_value=10, max_value=2000, value=max(active_patients, 120), step=10)
+        monthly_ticket = st.number_input("Receita média por ciclo/infusão (R$)", min_value=500, max_value=50000, value=4500, step=500)
+        avoided_delay_rate = st.slider("Ciclos protegidos por mês (%)", min_value=1, max_value=20, value=5)
+        monthly_price = st.number_input("Mensalidade clínica proposta (R$)", min_value=500, max_value=30000, value=3500, step=500)
+        protected_cycles = max(1, round(patients_input * avoided_delay_rate / 100))
+        protected_revenue = protected_cycles * monthly_ticket
+        roi_multiple = protected_revenue / monthly_price if monthly_price else 0
+        st.markdown("</div>", unsafe_allow_html=True)
+    with calc_right:
+        roi_cols = st.columns(3)
+        with roi_cols[0]:
+            render_metric("Ciclos protegidos", str(protected_cycles), "Estimativa mensal para defender valor.", "metric-d")
+        with roi_cols[1]:
+            render_metric("Receita preservada", f"R$ {protected_revenue:,.0f}".replace(",", "."), "Valor de agenda que o painel ajuda a proteger.", "metric-b")
+        with roi_cols[2]:
+            render_metric("ROI potencial", f"{roi_multiple:.1f}x", "Relação entre valor protegido e mensalidade.", "metric-a")
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Frase de venda</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="subtle">
+                Se o profissional mostrar que a clínica pode proteger apenas {protected_cycles} ciclo(s) por mês, com ticket médio de
+                R$ {monthly_ticket:,.0f}, o sistema ajuda a defender cerca de
+                R$ {protected_revenue:,.0f} em receita operacional. Uma mensalidade de
+                R$ {monthly_price:,.0f} para o plano clínica fica ancorada em ROI potencial de {roi_multiple:.1f}x.
+            </div>
+            """.replace(",", "."),
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Gerar proposta comercial</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="subtle">Monte uma proposta objetiva para enviar ao gestor da clínica após a conversa inicial.</div>',
+        unsafe_allow_html=True,
+    )
+    with st.form("commercial_proposal_form"):
+        proposal_col1, proposal_col2, proposal_col3 = st.columns(3)
+        with proposal_col1:
+            client_name = st.text_input("Nome da clínica", value="Clínica de Oncologia")
+            contact_name = st.text_input("Contato ou gestor", value="Gestão da clínica")
+        with proposal_col2:
+            proposal_plan = st.selectbox(
+                "Plano proposto",
+                ["Piloto institucional", "Plano clínica mensal", "Implantação enterprise"],
+            )
+            pilot_days = st.number_input("Duração do piloto (dias)", min_value=15, max_value=120, value=45, step=15)
+        with proposal_col3:
+            setup_value = st.number_input("Implantação / piloto (R$)", min_value=0, max_value=100000, value=5000, step=500)
+            proposal_monthly_value = st.number_input("Mensalidade após piloto (R$)", min_value=0, max_value=50000, value=monthly_price, step=500)
+        proposal_notes = st.text_area(
+            "Escopo e observações",
+            value="Carga da planilha atual, treinamento da equipe, painel operacional, relatório semanal de gargalos e reunião de fechamento do piloto.",
+            height=90,
+        )
+        generate_proposal = st.form_submit_button("Gerar Proposta Comercial", use_container_width=True)
+
+    if generate_proposal:
+        setup_label = f"R$ {setup_value:,.0f}".replace(",", ".")
+        monthly_label = f"R$ {proposal_monthly_value:,.0f}".replace(",", ".")
+        revenue_label = f"R$ {protected_revenue:,.0f}".replace(",", ".")
+        monthly_ticket_label = f"R$ {monthly_ticket:,.0f}".replace(",", ".")
+        proposal_text = f"""# Proposta Comercial - {PRODUCT_NAME}
+
+{PRODUCT_TAGLINE}
+
+## Cliente
+
+{client_name}
+
+Contato: {contact_name}
+
+## Resumo executivo
+
+Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar a navegação oncológica da clínica, centralizando carteira de pacientes, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais.
+
+A análise inicial indica {active_patients} paciente(s) na carteira filtrada, {monthly_sessions} infusão(ões) nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
+
+## Objetivo do piloto
+
+Durante {pilot_days} dias, a meta será reduzir riscos de atraso de ciclo e aumentar previsibilidade da agenda de infusão, com foco em:
+
+- antecipar cobrança de prescrição
+- acompanhar autorização do convênio
+- identificar pacientes sem agenda confirmada
+- consolidar a fila prioritária da equipe
+- gerar relatório semanal de gargalos
+
+## Tese de retorno
+
+Se a clínica proteger {protected_cycles} ciclo(s) por mês, com receita média estimada de {monthly_ticket_label} por ciclo, o valor operacional preservado pode chegar a {revenue_label}/mês.
+
+Com mensalidade de {monthly_label}, o ROI potencial estimado é de {roi_multiple:.1f}x.
+
+## Investimento
+
+- Implantação / piloto: {setup_label}
+- Mensalidade após piloto: {monthly_label}
+- Duração inicial: {pilot_days} dias
+
+## Escopo incluído
+
+{proposal_notes}
+
+## Próximo passo
+
+Realizar uma reunião de alinhamento operacional, validar a planilha-base e definir os indicadores de acompanhamento do piloto.
+"""
+        proposal_html = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proposta Comercial - {PRODUCT_NAME}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: Arial, sans-serif; margin: 0; background: #f4f8fa; color: #123847; line-height: 1.5; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 36px 24px 48px; }}
+    header {{
+      background: linear-gradient(135deg, #0f3d4c 0%, #16697a 58%, #2a9d8f 100%);
+      color: white;
+      padding: 34px;
+      border-radius: 22px;
+      box-shadow: 0 22px 45px rgba(15, 61, 76, 0.16);
+    }}
+    .brand {{ display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }}
+    .mark {{
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.16);
+      border: 1px solid rgba(255,255,255,.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+    }}
+    .kicker {{ font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #d9fbff; font-weight: 800; }}
+    h1 {{ margin: 0 0 8px 0; font-size: 34px; line-height: 1.1; }}
+    h2 {{ margin: 0 0 12px 0; color: #0f3d4c; }}
+    section {{ background: white; border: 1px solid #dce9ee; border-radius: 18px; padding: 22px; margin-top: 18px; }}
+    .grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }}
+    .metric {{ background: #eef8fc; border-radius: 14px; padding: 16px; min-height: 98px; }}
+    .metric strong {{ display: block; font-size: 27px; color: #0f3d4c; margin-bottom: 4px; }}
+    .investment {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }}
+    .investment div {{ background: #f7fbfd; border: 1px solid #dce9ee; border-radius: 14px; padding: 14px; }}
+    .investment strong {{ display: block; color: #0f3d4c; }}
+    li {{ margin: 6px 0; }}
+    footer {{ color: #67808a; font-size: 13px; margin-top: 18px; text-align: center; }}
+    @media (max-width: 760px) {{ .grid, .investment {{ grid-template-columns: 1fr; }} h1 {{ font-size: 28px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand">
+        <div class="mark">ON</div>
+        <div>
+          <div class="kicker">{PRODUCT_NAME}</div>
+          <div>{PRODUCT_PROMISE}</div>
+        </div>
+      </div>
+      <h1>{PRODUCT_TAGLINE}</h1>
+      <div>Proposta comercial para {client_name}</div>
+    </header>
+    <section>
+      <h2>Resumo executivo</h2>
+      <p>Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar carteira, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais.</p>
+      <div class="grid">
+        <div class="metric"><strong>{active_patients}</strong>pacientes na carteira</div>
+        <div class="metric"><strong>{monthly_sessions}</strong>infusões em 30 dias</div>
+        <div class="metric"><strong>{pending_patients}</strong>pacientes com atenção</div>
+      </div>
+    </section>
+    <section>
+      <h2>Tese de retorno</h2>
+      <p>Protegendo {protected_cycles} ciclo(s) por mês, com ticket médio estimado de {monthly_ticket_label}, a clínica pode preservar cerca de {revenue_label}/mês em operação.</p>
+      <p>Mensalidade proposta: <strong>{monthly_label}</strong>. ROI potencial estimado: <strong>{roi_multiple:.1f}x</strong>.</p>
+    </section>
+    <section>
+      <h2>Investimento e escopo</h2>
+      <div class="investment">
+        <div><strong>{setup_label}</strong>Implantação / piloto</div>
+        <div><strong>{monthly_label}</strong>Mensalidade após piloto</div>
+        <div><strong>{pilot_days} dias</strong>Duração inicial</div>
+      </div>
+      <p>{proposal_notes}</p>
+    </section>
+    <footer>{PRODUCT_NAME} - Navegação oncológica operacional</footer>
+  </main>
+</body>
+</html>
+"""
+        st.session_state["commercial_proposal_text"] = proposal_text
+        st.session_state["commercial_proposal_html"] = proposal_html
+
+    if st.session_state.get("commercial_proposal_text"):
+        st.text_area(
+            "Proposta pronta para enviar",
+            st.session_state["commercial_proposal_text"],
+            height=420,
+        )
+        download_col1, download_col2 = st.columns(2)
+        with download_col1:
+            st.download_button(
+                "Baixar proposta em Markdown",
+                data=st.session_state["commercial_proposal_text"],
+                file_name="proposta_comercial_navegacao_oncologica.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        with download_col2:
+            st.download_button(
+                "Baixar proposta visual em HTML",
+                data=st.session_state["commercial_proposal_html"],
+                file_name="proposta_comercial_navegacao_oncologica.html",
+                mime="text/html",
+                use_container_width=True,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
+    sales_left, sales_right = st.columns([1, 1])
+    with sales_left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Roteiro de venda em 6 passos</div>', unsafe_allow_html=True)
+        steps = [
+            ("1. Profissional testa", "Navegador ou coordenador organiza uma carteira e sente alívio operacional."),
+            ("2. Relatório de valor", "O app mostra pendências, ciclos próximos e riscos que a clínica deveria enxergar."),
+            ("3. Convite interno", "O profissional apresenta a visão para gestor, médico líder ou faturamento."),
+            ("4. Piloto institucional", "A clínica usa por 30 a 60 dias com meta operacional objetiva."),
+            ("5. Contrato mensal", "A assinatura entra com multiusuário, governança, suporte e relatórios."),
+            ("6. Expansão", "Adicionar unidades, integrações, indicadores financeiros e treinamento recorrente."),
+        ]
+        for title, copy in steps:
+            st.markdown(
+                f"""
+                <div class="sales-step">
+                    <div class="sales-step-title">{title}</div>
+                    <div class="sales-step-copy">{copy}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+    with sales_right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Próximos incrementos que aumentam preço</div>', unsafe_allow_html=True)
+        roadmap = pd.DataFrame(
+            [
+                ["Curto prazo", "Exportar fila prioritária", "Facilita rotina da equipe e vira entrega semanal."],
+                ["Curto prazo", "Resumo para apresentar à clínica", "Transforma o profissional em canal de venda."],
+                ["Curto prazo", "Alertas por e-mail/WhatsApp", "Aumenta percepção de automação e reduz dependência manual."],
+                ["Médio prazo", "Multiusuário com perfis", "Permite vender para clínicas maiores com governança."],
+                ["Médio prazo", "Indicadores financeiros", "Conecta cuidado, agenda e receita protegida."],
+                ["Longo prazo", "Integração com Tasy/PEP/ERP", "Abre venda enterprise e contratos mais altos."],
+            ],
+            columns=["Prazo", "Entrega", "Por que monetiza"],
+        )
+        st.dataframe(roadmap, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Novos cadastros</div>', unsafe_allow_html=True)
@@ -2735,6 +4006,7 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
     with col1:
         if st.button("Sincronizar agora com a planilha principal", use_container_width=True):
             try:
+                refresh_microsoft_workbook_if_configured()
                 imported, updated = sync_google_sheets_to_db()
                 st.success(f"Sincronização concluída: {imported} novo(s) e {updated} atualizado(s).")
                 st.rerun()
@@ -2750,6 +4022,109 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
         if workbook_file is not None:
             st.write(f"Caminho: `{workbook_file}`")
         st.write(f"Última sincronização: `{format_sync_timestamp(last_sync)}`")
+        microsoft_url = get_app_state(MICROSOFT_WORKBOOK_URL_KEY)
+        last_microsoft_download = get_app_state(LAST_MICROSOFT_DOWNLOAD_KEY)
+        if microsoft_url:
+            st.write("**Fonte online Microsoft:** vinculada")
+            st.write(f"Último download online: `{format_sync_timestamp(last_microsoft_download)}`")
+
+    st.markdown("---")
+    st.markdown("**Abas sincronizadas**")
+    st.caption(
+        "Escolha quais abas de médicos entram no painel. Isso evita importar carteiras de outros médicos sem querer."
+    )
+    workbook_file_for_sheets = find_primary_workbook_file()
+    if workbook_file_for_sheets is None:
+        st.info("Nenhuma planilha principal encontrada para listar abas.")
+    else:
+        try:
+            available_sheets = get_workbook_doctor_sheet_titles(workbook_file_for_sheets)
+            included_sheets = get_included_workbook_sheets(available_sheets)
+            selected_sheets = st.multiselect(
+                "Abas de médicos para sincronizar",
+                available_sheets,
+                default=included_sheets,
+            )
+            if st.button("Salvar abas e ressincronizar", use_container_width=True):
+                if not selected_sheets:
+                    st.warning("Selecione pelo menos uma aba.")
+                else:
+                    set_included_workbook_sheets(selected_sheets)
+                    imported, updated = sync_google_sheets_to_db()
+                    st.success(
+                        f"Abas salvas e base refeita com {len(selected_sheets)} aba(s): {imported} paciente(s)."
+                    )
+                    st.rerun()
+        except Exception as exc:
+            st.error(f"Não consegui listar as abas da planilha. Detalhe: {exc}")
+
+    st.markdown("---")
+    st.markdown("**Vincular planilha online Microsoft**")
+    st.caption(
+        "Cole um link compartilhado do Excel Online, OneDrive ou SharePoint. O app baixa uma cópia .xlsx e sincroniza os dados."
+    )
+    saved_microsoft_url = get_app_state(MICROSOFT_WORKBOOK_URL_KEY) or ""
+    with st.form("microsoft_workbook_form"):
+        microsoft_workbook_url = st.text_input(
+            "Link compartilhado da planilha Microsoft",
+            value=saved_microsoft_url,
+            placeholder="https://...onedrive... ou https://...sharepoint...",
+        )
+        microsoft_submit = st.form_submit_button("Vincular e sincronizar planilha online", use_container_width=True)
+    if microsoft_submit:
+        try:
+            downloaded_path = download_microsoft_workbook(microsoft_workbook_url)
+            imported, updated = sync_google_sheets_to_db()
+            st.success(
+                f"Planilha online vinculada em `{downloaded_path.name}` e sincronizada: {imported} novo(s) e {updated} atualizado(s)."
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não consegui baixar/sincronizar a planilha Microsoft. Detalhe: {exc}")
+
+    if saved_microsoft_url:
+        if st.button("Atualizar agora a partir do link Microsoft", use_container_width=True):
+            try:
+                downloaded_path = refresh_microsoft_workbook_if_configured()
+                imported, updated = sync_google_sheets_to_db()
+                st.success(
+                    f"Fonte online atualizada em `{downloaded_path.name if downloaded_path else UPLOADED_WORKBOOK_NAME}`: {imported} novo(s) e {updated} atualizado(s)."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não consegui atualizar pelo link Microsoft. Detalhe: {exc}")
+
+    st.markdown("---")
+    st.markdown("**Usar arquivo sincronizado no Mac**")
+    st.caption(
+        "Se o SharePoint exigir login, sincronize a pasta pelo OneDrive no Finder e cole aqui o caminho local do arquivo .xlsx."
+    )
+    saved_local_path = get_app_state(LOCAL_WORKBOOK_PATH_KEY) or ""
+    with st.form("local_workbook_path_form"):
+        local_workbook_path = st.text_input(
+            "Caminho local da planilha sincronizada",
+            value=saved_local_path,
+            placeholder="/Users/seu-usuario/Library/CloudStorage/OneDrive-.../PLANILHA.xlsx",
+        )
+        local_submit = st.form_submit_button("Usar caminho local e sincronizar", use_container_width=True)
+    if local_submit:
+        try:
+            candidate_path = clean_local_workbook_path(local_workbook_path)
+            if candidate_path.suffix.lower() == ".url":
+                raise ValueError(
+                    "Esse caminho aponta para um atalho .url do OneDrive, não para a planilha. "
+                    "No Finder, escolha o arquivo com ícone XLSX e extensão .xlsx, não o atalho .url."
+                )
+            if not candidate_path.exists():
+                raise FileNotFoundError("Não encontrei esse arquivo no Mac. Copie o caminho completo pelo Finder.")
+            if candidate_path.suffix.lower() != ".xlsx":
+                raise ValueError("O arquivo precisa estar no formato .xlsx.")
+            set_app_state(LOCAL_WORKBOOK_PATH_KEY, str(candidate_path))
+            imported, updated = sync_google_sheets_to_db()
+            st.success(f"Caminho local salvo e sincronizado: {imported} novo(s) e {updated} atualizado(s).")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não consegui usar esse caminho local. Detalhe: {exc}")
 
     st.markdown("---")
     st.markdown("**Trocar a fonte da planilha**")
@@ -3037,49 +4412,73 @@ def maybe_auto_sync_google() -> None:
 
     if should_sync:
         try:
+            refresh_microsoft_workbook_if_configured()
             sync_google_sheets_to_db()
         except Exception:
             pass
 
 
-def inject_auto_refresh() -> None:
-    refresh_ms = AUTO_SYNC_MINUTES * 60 * 1000
-    components.html(
-        f"""
-        <script>
-            setTimeout(function() {{
-                window.parent.location.reload();
-            }}, {refresh_ms});
-        </script>
-        """,
-        height=0,
-    )
-
-
 def main() -> None:
     init_db()
     ensure_auth_session_state()
+    restore_auth_from_query_params()
 
     st.markdown(APP_CSS, unsafe_allow_html=True)
     if not st.session_state.get("auth_user"):
         render_login_gate()
         return
+    ensure_persistent_auth_query_params()
 
     maybe_auto_sync_google()
-    inject_auto_refresh()
     sync_navigation_state_from_query_params()
 
     st.markdown(
-        """
+        f"""
         <div class="hero">
-            <h1 style="color:#ffffff !important;">Navegação Oncológica</h1>
+            <div class="brand-row">
+                <div class="brand-mark">ON</div>
+                <div>
+                    <div class="brand-kicker">{PRODUCT_NAME}</div>
+                    <div style="color:#d9fbff !important; font-weight:700;">{PRODUCT_PROMISE}</div>
+                </div>
+            </div>
+            <h1 style="color:#ffffff !important;">{PRODUCT_TAGLINE}</h1>
             <p style="color:#f3fbff !important;">
                 <span style="color:#f3fbff !important;">
-                    Painel para antecipar o próximo ciclo dos pacientes, conferir prescrição,
-                    autorização do convênio e agendamento da quimioterapia, reduzindo o risco
-                    de o paciente ficar fora da agenda.
+                    Produto para clínicas e profissionais de navegação que precisam transformar
+                    planilhas, mensagens e cobranças soltas em uma operação rastreável por ciclo.
                 </span>
             </p>
+            <div class="hero-actions">
+                <span class="hero-pill">Fila prioritária</span>
+                <span class="hero-pill">Agenda de infusão</span>
+                <span class="hero-pill">Autorização e prescrição</span>
+                <span class="hero-pill">Proposta comercial</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="product-strip">
+            <div class="product-proof">
+                <div class="product-proof-label">Usuário inicial</div>
+                <div class="product-proof-value">Profissional navegador</div>
+            </div>
+            <div class="product-proof">
+                <div class="product-proof-label">Cliente pagante</div>
+                <div class="product-proof-value">Clínica oncológica</div>
+            </div>
+            <div class="product-proof">
+                <div class="product-proof-label">Primeira oferta</div>
+                <div class="product-proof-value">Piloto de 45 dias</div>
+            </div>
+            <div class="product-proof">
+                <div class="product-proof-label">Tese de valor</div>
+                <div class="product-proof-value">Ciclos protegidos</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3094,6 +4493,8 @@ def main() -> None:
         st.caption(f"Acesso: {st.session_state.get('auth_user')}")
         if st.button("Encerrar sessão", use_container_width=True):
             st.session_state["auth_user"] = None
+            delete_app_state(REMEMBERED_AUTH_USER_KEY)
+            clear_auth_query_params()
             close_patient_detail()
             st.rerun()
         st.markdown("---")
@@ -3110,8 +4511,10 @@ def main() -> None:
         if find_primary_workbook_file() is not None:
             last_sync = get_app_state("last_google_sync_at")
             st.caption("Planilha principal conectada.")
+            if get_app_state(MICROSOFT_WORKBOOK_URL_KEY):
+                st.caption("Fonte Microsoft online vinculada.")
             st.caption(f"Última sincronização: {last_sync or 'ainda não sincronizado'}")
-            st.caption(f"Atualização automática a cada {AUTO_SYNC_MINUTES} minutos.")
+            st.caption(f"Sincroniza ao navegar ou ao clicar em sincronizar, sem derrubar o login.")
 
     filtered_patients = patients_df.copy()
     filtered_support = support_df.copy()
@@ -3140,22 +4543,24 @@ def main() -> None:
         render_calendar_patient_detail_page(patients_df, sessions_df)
         return
 
-    tabs = st.tabs(["Visão simples", "Painel operacional", "Alertas", "Pacientes", "Médicos", "Cadastros", "Importação", "Planilha principal"])
+    tabs = st.tabs(["Visão simples", "Painel operacional", "Modelo comercial", "Alertas", "Pacientes", "Médicos", "Cadastros", "Importação", "Planilha principal"])
     with tabs[0]:
         render_simple_dashboard(filtered_patients, filtered_support, filtered_sessions)
     with tabs[1]:
         render_dashboard(filtered_patients, filtered_support, filtered_sessions)
     with tabs[2]:
-        render_alerts_tab(filtered_patients)
+        render_commercial_tab(filtered_patients, filtered_sessions)
     with tabs[3]:
-        render_patients_tab(filtered_patients)
+        render_alerts_tab(filtered_patients)
     with tabs[4]:
-        render_doctors_tab(doctors_df, filtered_patients)
+        render_patients_tab(filtered_patients)
     with tabs[5]:
-        render_register_tab(doctors_df, patients_df)
+        render_doctors_tab(doctors_df, filtered_patients)
     with tabs[6]:
-        render_import_tab()
+        render_register_tab(doctors_df, patients_df)
     with tabs[7]:
+        render_import_tab()
+    with tabs[8]:
         render_google_sync_tab(patients_df)
 
 
