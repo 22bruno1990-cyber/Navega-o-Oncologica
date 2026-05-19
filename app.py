@@ -547,7 +547,7 @@ html, body, [class*="css"] {
 }
 
 .calendar-day {
-    min-height: 190px;
+    height: 270px;
     background: rgba(255, 255, 255, 0.92);
     border: 1px solid rgba(15, 61, 76, 0.08);
     border-radius: 18px;
@@ -582,7 +582,19 @@ html, body, [class*="css"] {
 }
 
 .calendar-events {
-    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 3px;
+}
+
+.calendar-events::-webkit-scrollbar {
+    width: 6px;
+}
+
+.calendar-events::-webkit-scrollbar-thumb {
+    background: rgba(15, 61, 76, 0.18);
+    border-radius: 999px;
 }
 
 .calendar-doctor-block {
@@ -2019,6 +2031,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
     conn = get_connection()
     existing_patient_state = {
         (row["source_sheet_name"], int(row["source_row_number"])): {
+            "active": row["active"],
             "insurance_name": row["insurance_name"],
             "notes": row["notes"],
             "prescription_status": row["prescription_status"],
@@ -2034,6 +2047,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
             SELECT
                 source_sheet_name,
                 source_row_number,
+                active,
                 insurance_name,
                 notes,
                 prescription_status,
@@ -2119,6 +2133,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     "next_chemo_date",
                     "scheduled_cycle_date",
                     "protocol_next_cycle_date",
+                    "active",
                 ]:
                     if existing_state.get(field_name) not in {None, ""}:
                         payload[field_name] = existing_state[field_name]
@@ -2133,12 +2148,12 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                 INSERT INTO patients (
                     doctor_id, name, diagnosis, regimen, cycle_interval_days,
                     last_chemo_date, next_chemo_date, support_plan, notes,
-                    insurance_name, prescription_status, prescription_requested_date,
+                    active, insurance_name, prescription_status, prescription_requested_date,
                     authorization_status, authorization_submission_date,
                     authorization_valid_until, scheduling_status, scheduled_cycle_date,
                     next_cycle_alert_days, protocol_next_cycle_date, source_sheet_name, source_row_number
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     doctor_id,
@@ -2150,6 +2165,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
                     payload["next_chemo_date"],
                     payload["support_plan"],
                     payload["notes"],
+                    int(payload.get("active", 1)),
                     payload["insurance_name"],
                     payload["prescription_status"],
                     payload["prescription_requested_date"],
@@ -2344,20 +2360,13 @@ def render_calendar_day_html(cell_date: date, in_month: bool, group: pd.DataFram
 
     if group is not None and not group.empty:
         sorted_group = group.sort_values(["doctor_name", "patient_name"])
-        shown_events = 0
-        max_events = 7
         for doctor_name, doctor_group in sorted_group.groupby("doctor_name", sort=False):
-            if shown_events >= max_events:
-                break
             color = doctor_calendar_color(str(doctor_name))
             patient_links = []
             for _, event in doctor_group.iterrows():
-                if shown_events >= max_events:
-                    break
                 patient_name = html.escape(abbreviate_patient_name(str(event["patient_name"])))
                 patient_url = html.escape(calendar_patient_url(int(event["patient_id"]), event["scheduled_date"]))
                 patient_links.append(f'<a class="calendar-patient-link" href="{patient_url}">{patient_name}</a>')
-                shown_events += 1
             if patient_links:
                 safe_doctor = html.escape(str(doctor_name))
                 event_blocks.append(
@@ -2365,9 +2374,6 @@ def render_calendar_day_html(cell_date: date, in_month: bool, group: pd.DataFram
                     f'<div class="calendar-doctor-group">{safe_doctor}</div>'
                     f'{"".join(patient_links)}</div>'
                 )
-        remaining = count - shown_events
-        if remaining > 0:
-            event_blocks.append(f'<div class="calendar-more">+{remaining} mais</div>')
 
     return (
         f'<div class="{day_classes}">'
@@ -2778,17 +2784,25 @@ def build_operational_table(filtered_patients: pd.DataFrame) -> pd.DataFrame:
 
 def update_patient_record(patient_id: int, updates: dict[str, object]) -> None:
     allowed_fields = [
+        "doctor_id",
         "diagnosis",
         "regimen",
+        "cycle_interval_days",
+        "last_chemo_date",
         "next_chemo_date",
         "protocol_next_cycle_date",
+        "support_plan",
         "notes",
         "insurance_name",
         "prescription_status",
+        "prescription_requested_date",
         "authorization_status",
+        "authorization_submission_date",
+        "authorization_valid_until",
         "scheduling_status",
         "scheduled_cycle_date",
         "next_cycle_alert_days",
+        "active",
     ]
     assignments = []
     values: list[object] = []
@@ -3779,7 +3793,203 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
             columns=["Prazo", "Entrega", "Por que monetiza"],
         )
         st.dataframe(roadmap, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_patient_management_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> None:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Gestão de pacientes</div>', unsafe_allow_html=True)
+
+    if doctors_df.empty:
+        with st.form("patient_management_doctor_form", clear_on_submit=True):
+            st.markdown("**Cadastrar médico**")
+            doctor_name = st.text_input("Nome do médico")
+            specialty = st.text_input("Especialidade")
+            submitted = st.form_submit_button("Salvar médico", use_container_width=True)
+            if submitted:
+                if not doctor_name.strip():
+                    st.warning("Informe o nome do médico.")
+                else:
+                    insert_doctor(doctor_name, specialty)
+                    st.success("Médico cadastrado.")
+                    st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    active_patients = patients_df[patients_df["active"].fillna(1).astype(int) == 1].copy()
+    archived_patients = patients_df[patients_df["active"].fillna(1).astype(int) == 0].copy()
+    new_col, edit_col = st.columns([1, 1.1])
+
+    doctor_options = {
+        f'{row["name"]} | {row["specialty"] or "Sem especialidade"}': int(row["id"])
+        for _, row in doctors_df.iterrows()
+    }
+
+    with new_col:
+        with st.form("patient_management_create_form", clear_on_submit=True):
+            st.markdown("**Novo paciente**")
+            selected_doctor = st.selectbox("Médico responsável", list(doctor_options.keys()), key="create_patient_doctor")
+            patient_name = st.text_input("Nome do paciente", key="create_patient_name")
+            diagnosis = st.text_input("Diagnóstico", key="create_patient_diagnosis")
+            regimen = st.text_input("Protocolo", key="create_patient_regimen")
+            insurance_name = st.text_input("Convênio", key="create_patient_insurance")
+            cycle_interval_days = st.number_input("Intervalo entre ciclos", min_value=1, max_value=90, value=21, key="create_patient_interval")
+            next_cycle_alert_days = st.number_input("Janela de alerta", min_value=1, max_value=90, value=21, key="create_patient_alert")
+            last_chemo_date = st.date_input("Última quimioterapia", value=None, key="create_patient_last_chemo")
+            next_chemo_date = st.date_input("Próxima quimioterapia", value=None, key="create_patient_next_chemo")
+            protocol_next_cycle = st.date_input("Próxima data do protocolo", value=None, key="create_patient_protocol_date")
+            support_plan = st.text_input("Plano de suporte", key="create_patient_support")
+            notes = st.text_area("Observações", key="create_patient_notes")
+            prescription_status = st.selectbox("Prescrição", list(PRESCRIPTION_LABELS.keys()), format_func=lambda x: PRESCRIPTION_LABELS[x], key="create_patient_prescription")
+            authorization_status = st.selectbox("Autorização", list(AUTHORIZATION_LABELS.keys()), format_func=lambda x: AUTHORIZATION_LABELS[x], key="create_patient_authorization")
+            scheduling_status = st.selectbox("Agenda", list(SCHEDULING_LABELS.keys()), format_func=lambda x: SCHEDULING_LABELS[x], key="create_patient_scheduling")
+            scheduled_cycle_date = st.date_input("Data agendada", value=None, key="create_patient_scheduled")
+            submitted = st.form_submit_button("Salvar paciente", use_container_width=True)
+            if submitted:
+                if not patient_name.strip():
+                    st.warning("Informe o nome do paciente.")
+                else:
+                    insert_patient(
+                        {
+                            "doctor_id": doctor_options[selected_doctor],
+                            "name": patient_name,
+                            "diagnosis": diagnosis,
+                            "regimen": regimen,
+                            "cycle_interval_days": int(cycle_interval_days),
+                            "last_chemo_date": last_chemo_date.strftime(DATE_FMT) if last_chemo_date else None,
+                            "next_chemo_date": next_chemo_date.strftime(DATE_FMT) if next_chemo_date else None,
+                            "support_plan": support_plan,
+                            "notes": notes,
+                            "insurance_name": insurance_name,
+                            "prescription_status": prescription_status,
+                            "prescription_requested_date": None,
+                            "authorization_status": authorization_status,
+                            "authorization_submission_date": None,
+                            "authorization_valid_until": None,
+                            "scheduling_status": scheduling_status,
+                            "scheduled_cycle_date": scheduled_cycle_date.strftime(DATE_FMT) if scheduled_cycle_date else None,
+                            "next_cycle_alert_days": int(next_cycle_alert_days),
+                        }
+                    )
+                    new_patient_id = load_patients().sort_values("id").iloc[-1]["id"]
+                    if protocol_next_cycle:
+                        update_patient_record(int(new_patient_id), {"protocol_next_cycle_date": protocol_next_cycle.strftime(DATE_FMT)})
+                    st.success("Paciente cadastrado.")
+                    st.rerun()
+
+    with edit_col:
+        patient_pool = pd.concat([active_patients, archived_patients], ignore_index=True)
+        if patient_pool.empty:
+            st.info("Nenhum paciente cadastrado.")
+        else:
+            patient_options = {
+                f'{row["name"]} | {row["doctor_name"]}{" | arquivado" if int(row["active"] or 0) == 0 else ""}': int(row["id"])
+                for _, row in patient_pool.sort_values(["active", "name"], ascending=[False, True]).iterrows()
+            }
+            selected_label = st.selectbox("Paciente", list(patient_options.keys()), key="manage_patient_selector")
+            selected_id = patient_options[selected_label]
+            patient_row = patient_pool[patient_pool["id"] == selected_id].iloc[0]
+            current_doctor_label = next(
+                (
+                    label
+                    for label, doctor_id in doctor_options.items()
+                    if doctor_id == int(patient_row["doctor_id"])
+                ),
+                list(doctor_options.keys())[0],
+            )
+
+            with st.form("patient_management_edit_form"):
+                st.markdown("**Editar paciente**")
+                prescription_keys = list(PRESCRIPTION_LABELS.keys())
+                prescription_value = patient_row["prescription_status"] if patient_row["prescription_status"] in prescription_keys else "not_requested"
+                authorization_keys = list(AUTHORIZATION_LABELS.keys())
+                authorization_value = patient_row["authorization_status"] if patient_row["authorization_status"] in authorization_keys else "not_sent"
+                scheduling_keys = list(SCHEDULING_LABELS.keys())
+                scheduling_value = patient_row["scheduling_status"] if patient_row["scheduling_status"] in scheduling_keys else "not_booked"
+                selected_doctor = st.selectbox(
+                    "Médico responsável",
+                    list(doctor_options.keys()),
+                    index=list(doctor_options.keys()).index(current_doctor_label),
+                    key="edit_patient_doctor",
+                )
+                diagnosis = st.text_input("Diagnóstico", value=patient_row["diagnosis"] or "", key="edit_patient_diagnosis")
+                regimen = st.text_input("Protocolo", value=patient_row["regimen"] or "", key="edit_patient_regimen")
+                insurance_name = st.text_input("Convênio", value=patient_row["insurance_name"] or "", key="edit_patient_insurance")
+                cycle_interval_days = st.number_input(
+                    "Intervalo entre ciclos",
+                    min_value=1,
+                    max_value=90,
+                    value=int(patient_row["cycle_interval_days"] or 21),
+                    key="edit_patient_interval",
+                )
+                next_cycle_alert_days = st.number_input(
+                    "Janela de alerta",
+                    min_value=1,
+                    max_value=90,
+                    value=int(patient_row["next_cycle_alert_days"] or 21),
+                    key="edit_patient_alert",
+                )
+                last_chemo_date = st.date_input("Última quimioterapia", value=parse_date(patient_row["last_chemo_date"]), key="edit_patient_last_chemo")
+                next_chemo_date = st.date_input("Próxima quimioterapia", value=parse_date(patient_row["next_chemo_date"]), key="edit_patient_next_chemo")
+                protocol_next_cycle = st.date_input("Próxima data do protocolo", value=parse_date(patient_row["protocol_next_cycle_date"]), key="edit_patient_protocol_date")
+                scheduled_cycle_date = st.date_input("Data agendada", value=parse_date(patient_row["scheduled_cycle_date"]), key="edit_patient_scheduled")
+                support_plan = st.text_input("Plano de suporte", value=patient_row["support_plan"] or "", key="edit_patient_support")
+                notes = st.text_area("Observações", value=patient_row["notes"] or "", key="edit_patient_notes")
+                prescription_status = st.selectbox(
+                    "Prescrição",
+                    prescription_keys,
+                    index=prescription_keys.index(prescription_value),
+                    format_func=lambda x: PRESCRIPTION_LABELS[x],
+                    key="edit_patient_prescription",
+                )
+                authorization_status = st.selectbox(
+                    "Autorização",
+                    authorization_keys,
+                    index=authorization_keys.index(authorization_value),
+                    format_func=lambda x: AUTHORIZATION_LABELS[x],
+                    key="edit_patient_authorization",
+                )
+                scheduling_status = st.selectbox(
+                    "Agenda",
+                    scheduling_keys,
+                    index=scheduling_keys.index(scheduling_value),
+                    format_func=lambda x: SCHEDULING_LABELS[x],
+                    key="edit_patient_scheduling",
+                )
+                active_value = st.checkbox("Paciente ativo", value=int(patient_row["active"] or 0) == 1, key="edit_patient_active")
+                submitted = st.form_submit_button("Salvar alterações", use_container_width=True)
+                if submitted:
+                    update_patient_record(
+                        selected_id,
+                        {
+                            "doctor_id": doctor_options[selected_doctor],
+                            "diagnosis": diagnosis.strip(),
+                            "regimen": regimen.strip(),
+                            "cycle_interval_days": int(cycle_interval_days),
+                            "last_chemo_date": last_chemo_date.strftime(DATE_FMT) if last_chemo_date else None,
+                            "next_chemo_date": next_chemo_date.strftime(DATE_FMT) if next_chemo_date else None,
+                            "protocol_next_cycle_date": protocol_next_cycle.strftime(DATE_FMT) if protocol_next_cycle else None,
+                            "scheduled_cycle_date": scheduled_cycle_date.strftime(DATE_FMT) if scheduled_cycle_date else None,
+                            "support_plan": support_plan.strip(),
+                            "notes": notes.strip(),
+                            "insurance_name": insurance_name.strip(),
+                            "prescription_status": prescription_status,
+                            "authorization_status": authorization_status,
+                            "scheduling_status": scheduling_status,
+                            "next_cycle_alert_days": int(next_cycle_alert_days),
+                            "active": 1 if active_value else 0,
+                        },
+                    )
+                    st.success("Paciente atualizado.")
+                    st.rerun()
+
+    st.markdown("---")
+    metric_col1, metric_col2 = st.columns(2)
+    with metric_col1:
+        render_metric("Pacientes ativos", str(len(active_patients)), "Entram no painel e no calendário.", "metric-a")
+    with metric_col2:
+        render_metric("Pacientes arquivados", str(len(archived_patients)), "Ficam fora da rotina diária.", "metric-d")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_register_tab(doctors_df: pd.DataFrame, patients_df: pd.DataFrame) -> None:
@@ -4485,7 +4695,8 @@ def main() -> None:
     )
 
     doctors_df = load_doctors()
-    patients_df = load_patients()
+    all_patients_df = load_patients()
+    patients_df = all_patients_df.copy()
     support_df = load_support_medications()
     sessions_df = load_chemo_sessions()
 
@@ -4502,7 +4713,12 @@ def main() -> None:
         doctor_options = ["Todos"] + doctors_df["name"].tolist()
         selected_doctor = st.selectbox("Médico", doctor_options)
 
-        patient_names = patients_df["name"].tolist()
+        show_archived_patients = st.toggle("Incluir pacientes arquivados", value=False)
+        sidebar_patients_df = patients_df.copy()
+        if not show_archived_patients and not sidebar_patients_df.empty:
+            sidebar_patients_df = sidebar_patients_df[sidebar_patients_df["active"].fillna(1).astype(int) == 1]
+
+        patient_names = sidebar_patients_df["name"].tolist()
         selected_patient = st.selectbox("Paciente", ["Todos"] + patient_names)
 
         show_only_attention = st.toggle("Mostrar apenas pacientes com alerta", value=False)
@@ -4516,9 +4732,10 @@ def main() -> None:
             st.caption(f"Última sincronização: {last_sync or 'ainda não sincronizado'}")
             st.caption(f"Sincroniza ao navegar ou ao clicar em sincronizar, sem derrubar o login.")
 
+    patients_df = sidebar_patients_df.copy()
     filtered_patients = patients_df.copy()
-    filtered_support = support_df.copy()
-    filtered_sessions = sessions_df.copy()
+    filtered_support = support_df[support_df["patient_name"].isin(patients_df["name"])].copy() if not patients_df.empty else support_df.iloc[0:0].copy()
+    filtered_sessions = sessions_df[sessions_df["patient_id"].isin(patients_df["id"])].copy() if not patients_df.empty else sessions_df.iloc[0:0].copy()
 
     if selected_doctor != "Todos":
         filtered_patients = filtered_patients[filtered_patients["doctor_name"] == selected_doctor]
@@ -4543,13 +4760,13 @@ def main() -> None:
         render_calendar_patient_detail_page(patients_df, sessions_df)
         return
 
-    tabs = st.tabs(["Visão simples", "Painel operacional", "Modelo comercial", "Alertas", "Pacientes", "Médicos", "Cadastros", "Importação", "Planilha principal"])
+    tabs = st.tabs(["Visão simples", "Painel operacional", "Gestão de pacientes", "Alertas", "Pacientes", "Médicos", "Planilha principal", "Importação", "Modelo comercial"])
     with tabs[0]:
         render_simple_dashboard(filtered_patients, filtered_support, filtered_sessions)
     with tabs[1]:
         render_dashboard(filtered_patients, filtered_support, filtered_sessions)
     with tabs[2]:
-        render_commercial_tab(filtered_patients, filtered_sessions)
+        render_patient_management_tab(doctors_df, all_patients_df)
     with tabs[3]:
         render_alerts_tab(filtered_patients)
     with tabs[4]:
@@ -4557,11 +4774,11 @@ def main() -> None:
     with tabs[5]:
         render_doctors_tab(doctors_df, filtered_patients)
     with tabs[6]:
-        render_register_tab(doctors_df, patients_df)
+        render_google_sync_tab(patients_df)
     with tabs[7]:
         render_import_tab()
     with tabs[8]:
-        render_google_sync_tab(patients_df)
+        render_commercial_tab(filtered_patients, filtered_sessions)
 
 
 if __name__ == "__main__":
