@@ -44,10 +44,26 @@ O profissional de navegação, enfermagem coordenadora ou secretaria especializa
 
 ### Oferta recomendada
 
-1. Plano profissional: `R$ 99` a `R$ 299` por usuário/mês
-2. Piloto institucional: `R$ 3.000` a `R$ 8.000` por 30 a 60 dias
-3. Mensalidade clínica: `R$ 1.500` a `R$ 6.000` por unidade/mês
-4. Implantação enterprise: `R$ 15.000+` para múltiplas unidades, integrações e governança
+O OncoNavega não deve ser vendido como agenda barata. A tese é operação crítica de navegação oncológica: proteger ciclo, prescrição, autorização, agenda e receita.
+
+1. Plano profissional: `R$ 349` por mês, com instância separada
+2. Oferta fundadora opcional: `R$ 299` por mês por 3 meses
+3. Piloto assistido: `R$ 3.000` a `R$ 8.000` por 30 a 45 dias
+4. Mensalidade clínica: a partir de `R$ 1.500` por unidade/mês
+5. Clínica com customização e suporte: `R$ 2.500` a `R$ 6.000` por unidade/mês
+6. Implantação enterprise: `R$ 15.000+` para múltiplas unidades, integrações e governança
+
+### Modelo de licença MVP
+
+Para novos profissionais, use instância separada:
+
+```text
+1 licença profissional = 1 instância + 1 usuário principal + 1 base de pacientes
+```
+
+Cada profissional deve ter link próprio, banco próprio, planilha/base própria e usuário/senha próprios no Streamlit Secrets. Isso evita mistura de pacientes, reduz risco de acesso indevido, simplifica LGPD no MVP e deixa a cobrança por licença mais clara.
+
+Para clínicas, o modelo evolui para plano institucional com multiusuário, governança, suporte, backup e relatórios.
 
 ### Como o profissional ajuda a vender para a clínica
 
@@ -80,7 +96,7 @@ Nesse cenário, uma mensalidade de `R$ 3.500` fica ancorada em uma tese de retor
 1. Profissional testa: organizar uma carteira individual com dados mínimos, autorizados ou anonimizados.
 2. Relatório de valor: mostrar pendências, ciclos próximos e riscos que a clínica deveria acompanhar.
 3. Convite interno: profissional apresenta o resumo para gestor, médico líder ou faturamento.
-4. Piloto institucional: clínica usa por 30 a 60 dias com uma meta objetiva.
+4. Piloto assistido: clínica usa por 30 a 45 dias com uma meta objetiva.
 5. Contrato mensal: converter em assinatura com multiusuário, suporte, backup e governança.
 6. Expansão: adicionar unidades, integrações, indicadores financeiros e treinamento recorrente.
 
@@ -93,7 +109,7 @@ A aba `Modelo comercial` inclui duas entregas para apoiar venda:
 - `Baixar one-page do produto`: página HTML com nome, promessa, oferta e tese de valor do OncoNavega.
 - mensagens prontas para WhatsApp e e-mail de abordagem.
 - playbook de venda por modo: profissional navegador ou clínica/gestor.
-- pacote de piloto de 45 dias com etapas, entregáveis e meta.
+- pacote de piloto assistido de 30 a 45 dias com etapas, entregáveis e meta.
 
 Os materiais podem ser baixados em Markdown. A proposta também pode ser baixada como uma página HTML simples para envio ou abertura no navegador.
 
@@ -153,8 +169,8 @@ Observações:
 - sincronização manual da planilha principal
 - troca da planilha principal pela interface do app
 - vínculo com planilha online Microsoft por link compartilhado do Excel Online, OneDrive ou SharePoint
-- aba `Modelo comercial` com funil profissional-clínica, pacotes, ROI, apresentação externa, proposta comercial e roteiro de venda
-- mensagens de abordagem comercial e pacote de piloto de 45 dias
+- aba `Modelo comercial` com funil profissional-clínica, pacotes premium, ROI, modelo de licença por instância, apresentação externa, proposta comercial e roteiro de venda
+- mensagens de abordagem comercial e pacote de piloto assistido de 30 a 45 dias
 
 ## Vincular planilha Microsoft online
 

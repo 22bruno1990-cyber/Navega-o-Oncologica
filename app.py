@@ -3238,6 +3238,11 @@ def render_dashboard(
 def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd.DataFrame) -> None:
     active_patients = len(filtered_patients)
     monthly_sessions = 0
+    professional_price = 349
+    founder_price = 299
+    clinic_entry_price = 1500
+    clinic_premium_range = "R$ 2.500 a R$ 6.000/mês"
+    pilot_range = "R$ 3.000 a R$ 8.000"
     if not filtered_sessions.empty:
         sessions_df = filtered_sessions.copy()
         sessions_df["scheduled_dt"] = pd.to_datetime(sessions_df["scheduled_date"], errors="coerce")
@@ -3253,7 +3258,7 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
     with col3:
         render_metric("Infusões em 30 dias", str(monthly_sessions), "Volume ajuda a calcular ganho operacional.", "metric-b")
     with col4:
-        render_metric("Receita principal", "Clínica", "Contrato institucional com usuários, governança e ROI.", "metric-protocol")
+        render_metric("Licença MVP", "1 instância", "Um link, um banco e uma base por profissional ou clínica.", "metric-protocol")
 
     st.markdown("")
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -3264,6 +3269,8 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
             O profissional de navegação sente a dor todos os dias e pode começar usando o app para organizar
             a própria carteira. A clínica compra quando percebe que precisa centralizar os dados, liberar acesso
             para a equipe, padronizar o processo e proteger agenda, receita e governança.
+            O preço deve refletir operação crítica, não agenda genérica: se um ciclo atrasado for evitado,
+            o sistema já pode se pagar.
         </div>
         """,
         unsafe_allow_html=True,
@@ -3328,10 +3335,18 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
     <section>
       <h2>Oferta inicial</h2>
       <div class="grid">
-        <div class="card"><h3>Profissional</h3><div class="price">R$ 99 a R$ 299/mês</div><p>Carteira individual, alertas e resumo para apresentar à clínica.</p></div>
-        <div class="card"><h3>Clínica</h3><div class="price">R$ 1,5k a R$ 6k/mês</div><p>Multiusuário, relatórios, suporte, backup e governança.</p></div>
-        <div class="card"><h3>Piloto de 45 dias</h3><div class="price">R$ 3k a R$ 8k</div><p>Implantação assistida, relatório semanal e reunião de fechamento.</p></div>
+        <div class="card"><h3>Profissional</h3><div class="price">R$ {professional_price}/mês</div><p>Instância própria, carteira individual, alertas e resumo para apresentar à clínica.</p></div>
+        <div class="card"><h3>Clínica</h3><div class="price">a partir de R$ 1.500/mês</div><p>Ambiente institucional com equipe, relatórios, suporte, backup e governança.</p></div>
+        <div class="card"><h3>Piloto assistido</h3><div class="price">{pilot_range}</div><p>30 a 45 dias com implantação assistida, relatório semanal e reunião de fechamento.</p></div>
       </div>
+    </section>
+    <section>
+      <h2>Modelo de licença</h2>
+      <ul>
+        <li>1 licença profissional = 1 instância + 1 usuário principal + 1 base de pacientes.</li>
+        <li>Cada profissional começa em ambiente separado, sem misturar dados de outros usuários.</li>
+        <li>Para clínicas, migramos para plano institucional com usuários, governança e suporte.</li>
+      </ul>
     </section>
     <section>
       <h2>Como prova valor</h2>
@@ -3373,25 +3388,25 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
         )
         if commercial_mode == "Profissional navegador":
             mode_pitch = (
-                "Organize sua carteira em um lugar só e gere um resumo objetivo para mostrar à clínica "
-                "onde existem riscos de prescrição, autorização, agenda e próximo ciclo."
+                "Organize sua carteira em uma instância própria, com base separada, e gere um resumo objetivo "
+                "para mostrar à clínica onde existem riscos de prescrição, autorização, agenda e próximo ciclo."
             )
-            mode_cta = "Comece com o plano profissional e use a apresentação externa para abrir a conversa interna."
+            mode_cta = f"Comece com o plano profissional de R$ {professional_price}/mês ou oferta fundadora de R$ {founder_price}/mês por 3 meses."
             mode_bullets = [
                 "Menos dependência de planilhas soltas.",
                 "Mais clareza sobre quem cobrar hoje.",
-                "Material pronto para pedir apoio da clínica.",
+                "Ambiente separado para não misturar bases de pacientes.",
             ]
         else:
             mode_pitch = (
                 "Centralize a operação de navegação oncológica, reduza ciclos em risco e acompanhe a agenda "
                 "com indicadores para gestão, médicos, navegação e faturamento."
             )
-            mode_cta = "Contrate um piloto institucional de 45 dias com meta operacional e relatório semanal."
+            mode_cta = "Contrate um piloto assistido de 30 a 45 dias com meta operacional e relatório semanal."
             mode_bullets = [
                 "Multiusuário e governança dos dados.",
                 "Fila prioritária por risco operacional.",
-                "ROI ancorado em receita preservada.",
+                "Mensalidade ancorada em ciclos protegidos e receita preservada.",
             ]
         st.markdown("</div>", unsafe_allow_html=True)
     with mode_right:
@@ -3430,7 +3445,7 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
         (
             "Contrato que sustenta",
             [
-                "Plano clínica com multiusuário, relatórios e governança.",
+                "Plano clínica a partir de R$ 1.500/mês com multiusuário, relatórios e governança.",
                 "Implantação com a planilha atual e rotina da equipe.",
                 "Mensalidade ancorada em receita preservada e menor retrabalho.",
             ],
@@ -3450,25 +3465,31 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
             )
 
     st.markdown("")
-    price_cols = st.columns(3)
+    price_cols = st.columns(4)
     price_cards = [
         (
             "Profissional",
-            "R$ 99 a R$ 299",
-            "por usuário/mês",
-            ["Carteira individual", "Alertas e calendário", "Resumo para apresentar à clínica"],
+            f"R$ {professional_price}",
+            "por mês",
+            ["Instância separada", "1 usuário principal", "1 base de pacientes"],
+        ),
+        (
+            "Fundador",
+            f"R$ {founder_price}",
+            "por mês por 3 meses",
+            ["Oferta early adopter", "Feedback estruturado", "Setup simples incluso"],
         ),
         (
             "Clínica",
-            "R$ 1,5k a R$ 6k",
+            "R$ 1.500+",
             "por unidade/mês",
-            ["Multiusuário e perfis", "Relatórios gerenciais", "Suporte, backup e governança"],
+            ["Multiusuário e perfis", "Relatórios gerenciais", clinic_premium_range],
         ),
         (
-            "Implantação",
-            "R$ 15k+",
-            "setup, treino e integrações",
-            ["Carga de base e planilhas", "Desenho da rotina operacional", "Integração com agenda, BI ou ERP"],
+            "Piloto",
+            pilot_range,
+            "30 a 45 dias",
+            ["Implantação assistida", "Relatório semanal", "Reunião de fechamento"],
         ),
     ]
     for column, (name, value, note, bullets) in zip(price_cols, price_cards):
@@ -3485,6 +3506,39 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
                 """,
                 unsafe_allow_html=True,
             )
+
+    st.markdown("")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Como liberar acesso para outro profissional</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="subtle">
+            No MVP, não libere novos profissionais no mesmo ambiente de outro cliente. Cada profissional começa
+            com uma instância própria, separada da base de outros usuários: link próprio, banco próprio,
+            planilha própria e usuário/senha próprios no Streamlit Secrets. Para clínicas, migramos para plano
+            institucional com usuários, governança e suporte.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    access_cols = st.columns(3)
+    access_cards = [
+        ("Licença profissional", "1 instância + 1 usuário principal + 1 base de pacientes."),
+        ("Por que separar", "Evita mistura de pacientes, reduz risco de acesso indevido e facilita cobrança por licença."),
+        ("Quando virar clínica", "Acesso multiusuário, governança, backup e suporte entram no plano institucional."),
+    ]
+    for column, (title, copy) in zip(access_cols, access_cards):
+        with column:
+            st.markdown(
+                f"""
+                <div class="commercial-card">
+                    <h3>{title}</h3>
+                    <p>{copy}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("")
     funnel_left, funnel_right = st.columns([1, 1])
@@ -3518,9 +3572,15 @@ Quando esses pontos ficam espalhados em planilhas, mensagens e memória da equip
 
 Usar o {PRODUCT_NAME} como ferramenta institucional para centralizar a carteira, acompanhar pendências por ciclo, priorizar pacientes em risco e dar visibilidade para navegação, médicos, faturamento e gestão.
 
+## Modelo de acesso para novos profissionais
+
+Cada profissional começa com um ambiente próprio, separado da base de outros usuários: link próprio, banco próprio, planilha própria e usuário/senha próprios.
+
+Para clínicas, migramos para plano institucional com usuários, governança, suporte e rotina de backup.
+
 ## Próximo passo sugerido
 
-Fazer um piloto institucional de 30 a 60 dias, com uma meta simples:
+Fazer um piloto assistido de 30 a 45 dias, com uma meta simples:
 
 - reduzir ciclos com pendência perto da data de infusão
 - antecipar cobranças de prescrição e autorização
@@ -3529,10 +3589,13 @@ Fazer um piloto institucional de 30 a 60 dias, com uma meta simples:
 
 ## Modelo comercial
 
-- Plano clínica: R$ 1.500 a R$ 6.000 por unidade/mês
-- Implantação assistida: R$ 3.000 a R$ 8.000 no piloto
+- Plano profissional: R$ {professional_price}/mês
+- Oferta fundadora: R$ {founder_price}/mês por 3 meses
+- Plano clínica: a partir de R$ {clinic_entry_price:,.0f}/mês por unidade
+- Clínica com customização e suporte: {clinic_premium_range}
+- Piloto assistido: {pilot_range} por 30 a 45 dias
 - Integrações e expansão: orçamento conforme escopo
-"""
+""".replace(",", ".")
         st.markdown(
             f"""
             <div class="subtle">
@@ -3566,9 +3629,10 @@ Fazer um piloto institucional de 30 a 60 dias, com uma meta simples:
         st.markdown(
             """
             <div class="subtle">
-                Para uso profissional individual, trabalhe com autorização da clínica ou com dados mínimos:
-                iniciais, datas, status e códigos internos. Dados identificáveis e acesso multiusuário devem
-                migrar para o plano clínica, com responsável institucional, controle de acesso e rotina de backup.
+                Para uso profissional individual, trabalhe com autorização da clínica ou com dados mínimos. 
+                A licença inicial deve ser vendida como instância separada, não como senha compartilhada:
+                um link, um banco e uma base por profissional. Dados identificáveis, multiusuário e relatórios
+                de gestão devem migrar para o plano clínica, com responsável institucional e rotina de backup.
             </div>
             """,
             unsafe_allow_html=True,
@@ -3583,7 +3647,9 @@ Estou organizando a navegação oncológica com o {PRODUCT_NAME}, um produto sim
 
 Na carteira analisada hoje temos {active_patients} paciente(s) ativo(s), {monthly_sessions} infusão(ões) nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
 
-Acho que vale uma conversa rápida para avaliar um piloto de 45 dias na clínica, com relatório semanal de gargalos e foco em reduzir risco de atraso de ciclo.
+O produto não é uma agenda genérica: é uma camada operacional para proteger ciclo, prescrição, autorização, agenda e receita.
+
+Acho que vale uma conversa rápida para avaliar um piloto assistido de 30 a 45 dias, com relatório semanal de gargalos e foco em reduzir risco de atraso de ciclo.
 """
     email_message = f"""Assunto: Piloto de navegação oncológica para reduzir atrasos de ciclo
 
@@ -3593,7 +3659,7 @@ Estou estruturando o {PRODUCT_NAME} para dar visibilidade aos próximos ciclos, 
 
 Na carteira analisada, temos {active_patients} paciente(s) ativo(s), {monthly_sessions} infusão(ões) previstas nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
 
-Minha sugestão é fazermos um piloto institucional de 45 dias, com:
+Minha sugestão é fazermos um piloto assistido de 30 a 45 dias, com:
 
 - carga da planilha atual
 - fila prioritária de pacientes em risco
@@ -3602,6 +3668,8 @@ Minha sugestão é fazermos um piloto institucional de 45 dias, com:
 - reunião de fechamento com indicadores e próximos passos
 
 O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agenda e dar mais governança para navegação, médicos, faturamento e gestão.
+
+Para novos profissionais, o acesso começa em instância separada: link próprio, banco próprio, base própria e usuário/senha próprios. Para clínicas, evoluímos para plano institucional com usuários, governança e suporte.
 """
     with outreach_left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -3630,13 +3698,13 @@ O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agen
 
     st.markdown("")
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Pacote de piloto de 45 dias</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Pacote de piloto assistido de 30 a 45 dias</div>', unsafe_allow_html=True)
     pilot_cols = st.columns(3)
     pilot_steps = [
         ("Semana 1", "Carga da planilha, ajuste dos campos e definição dos indicadores do piloto."),
         ("Semanas 2-3", "Uso assistido da fila prioritária, calendário e pendências por ciclo."),
         ("Semanas 4-5", "Relatórios semanais de gargalos, atrasos evitáveis e oportunidades de processo."),
-        ("Semana 6", "Reunião de fechamento com ROI estimado, decisão de assinatura e próximos incrementos."),
+        ("Fechamento", "Reunião com ROI estimado, decisão de assinatura e próximos incrementos."),
         ("Entregáveis", "Painel em uso, rotina documentada, proposta de contrato mensal e backlog de melhorias."),
         ("Meta do piloto", "Reduzir ciclos em risco e provar valor antes da contratação mensal."),
     ]
@@ -3657,7 +3725,7 @@ O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agen
     calc_left, calc_right = st.columns([1, 1.2])
     with calc_left:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Simulador de ROI para venda</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Simulador de ROI para venda premium</div>', unsafe_allow_html=True)
         patients_input = st.number_input("Pacientes ativos na clínica", min_value=10, max_value=2000, value=max(active_patients, 120), step=10)
         monthly_ticket = st.number_input("Receita média por ciclo/infusão (R$)", min_value=500, max_value=50000, value=4500, step=500)
         avoided_delay_rate = st.slider("Ciclos protegidos por mês (%)", min_value=1, max_value=20, value=5)
@@ -3683,6 +3751,7 @@ O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agen
                 R$ {monthly_ticket:,.0f}, o sistema ajuda a defender cerca de
                 R$ {protected_revenue:,.0f} em receita operacional. Uma mensalidade de
                 R$ {monthly_price:,.0f} para o plano clínica fica ancorada em ROI potencial de {roi_multiple:.1f}x.
+                Para profissional individual, a âncora é R$ {professional_price}/mês em instância separada.
             </div>
             """.replace(",", "."),
             unsafe_allow_html=True,
@@ -3704,7 +3773,7 @@ O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agen
         with proposal_col2:
             proposal_plan = st.selectbox(
                 "Plano proposto",
-                ["Piloto institucional", "Plano clínica mensal", "Implantação enterprise"],
+                ["Piloto assistido", "Plano profissional individual", "Plano clínica mensal", "Implantação enterprise"],
             )
             pilot_days = st.number_input("Duração do piloto (dias)", min_value=15, max_value=120, value=45, step=15)
         with proposal_col3:
@@ -3712,7 +3781,7 @@ O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agen
             proposal_monthly_value = st.number_input("Mensalidade após piloto (R$)", min_value=0, max_value=50000, value=monthly_price, step=500)
         proposal_notes = st.text_area(
             "Escopo e observações",
-            value="Carga da planilha atual, treinamento da equipe, painel operacional, relatório semanal de gargalos e reunião de fechamento do piloto.",
+            value="Instância separada, carga da planilha atual, treinamento da equipe, painel operacional, relatório semanal de gargalos e reunião de fechamento do piloto.",
             height=90,
         )
         generate_proposal = st.form_submit_button("Gerar Proposta Comercial", use_container_width=True)
@@ -3748,6 +3817,12 @@ Durante {pilot_days} dias, a meta será reduzir riscos de atraso de ciclo e aume
 - consolidar a fila prioritária da equipe
 - gerar relatório semanal de gargalos
 
+## Modelo de acesso e licença
+
+No MVP, cada licença profissional é entregue em uma instância separada: um link próprio, um banco próprio, uma base de pacientes e um usuário principal.
+
+Para clínicas, o modelo evolui para plano institucional com multiusuário, governança, suporte e rotina de backup.
+
 ## Tese de retorno
 
 Se a clínica proteger {protected_cycles} ciclo(s) por mês, com receita média estimada de {monthly_ticket_label} por ciclo, o valor operacional preservado pode chegar a {revenue_label}/mês.
@@ -3758,6 +3833,9 @@ Com mensalidade de {monthly_label}, o ROI potencial estimado é de {roi_multiple
 
 - Implantação / piloto: {setup_label}
 - Mensalidade após piloto: {monthly_label}
+- Referência profissional individual: R$ {professional_price}/mês
+- Oferta fundadora opcional: R$ {founder_price}/mês por 3 meses
+- Clínica com customização e suporte: {clinic_premium_range}
 - Duração inicial: {pilot_days} dias
 
 ## Escopo incluído
@@ -3835,6 +3913,11 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
       </div>
     </section>
     <section>
+      <h2>Modelo de acesso</h2>
+      <p>No MVP, cada licença profissional é entregue em instância separada: link próprio, banco próprio, base própria e um usuário principal.</p>
+      <p>Para clínicas, o modelo evolui para ambiente institucional com multiusuário, governança, suporte e backup.</p>
+    </section>
+    <section>
       <h2>Tese de retorno</h2>
       <p>Protegendo {protected_cycles} ciclo(s) por mês, com ticket médio estimado de {monthly_ticket_label}, a clínica pode preservar cerca de {revenue_label}/mês em operação.</p>
       <p>Mensalidade proposta: <strong>{monthly_label}</strong>. ROI potencial estimado: <strong>{roi_multiple:.1f}x</strong>.</p>
@@ -3890,7 +3973,7 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
             ("1. Profissional testa", "Navegador ou coordenador organiza uma carteira e sente alívio operacional."),
             ("2. Relatório de valor", "O app mostra pendências, ciclos próximos e riscos que a clínica deveria enxergar."),
             ("3. Convite interno", "O profissional apresenta a visão para gestor, médico líder ou faturamento."),
-            ("4. Piloto institucional", "A clínica usa por 30 a 60 dias com meta operacional objetiva."),
+            ("4. Piloto assistido", "A clínica usa por 30 a 45 dias com meta operacional objetiva."),
             ("5. Contrato mensal", "A assinatura entra com multiusuário, governança, suporte e relatórios."),
             ("6. Expansão", "Adicionar unidades, integrações, indicadores financeiros e treinamento recorrente."),
         ]
@@ -4885,7 +4968,7 @@ def main() -> None:
             </div>
             <div class="product-proof">
                 <div class="product-proof-label">Primeira oferta</div>
-                <div class="product-proof-value">Piloto de 45 dias</div>
+                <div class="product-proof-value">Piloto assistido</div>
             </div>
             <div class="product-proof">
                 <div class="product-proof-label">Tese de valor</div>
