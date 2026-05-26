@@ -30,6 +30,7 @@ DEFAULT_SPREADSHEET_ID = "1W1FKPD-F5Fmq4it8vT9_2vFwZX_SgtkD6m0-bmBABaM"
 AUTO_SYNC_MINUTES = 5
 PRIMARY_WORKBOOK_NAME = "PLANILHA DE PRESCRIÇÕES - MÉDICOS JULIANA - Copiar.xlsx"
 UPLOADED_WORKBOOK_NAME = "cloud_primary_workbook.xlsx"
+PENDING_WORKBOOK_NAME = "pending_primary_workbook.xlsx"
 MICROSOFT_WORKBOOK_URL_KEY = "microsoft_online_workbook_url"
 LAST_MICROSOFT_DOWNLOAD_KEY = "last_microsoft_download_at"
 LOCAL_WORKBOOK_PATH_KEY = "local_workbook_path"
@@ -1342,6 +1343,22 @@ def save_uploaded_primary_workbook(uploaded_file) -> Path:
     return target
 
 
+def save_pending_primary_workbook(uploaded_file) -> Path:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    target = DATA_DIR / PENDING_WORKBOOK_NAME
+    target.write_bytes(uploaded_file.getbuffer())
+    return target
+
+
+def promote_pending_primary_workbook() -> Path:
+    pending = DATA_DIR / PENDING_WORKBOOK_NAME
+    if not pending.exists():
+        raise FileNotFoundError("Nenhuma planilha pendente encontrada para confirmar.")
+    target = DATA_DIR / UPLOADED_WORKBOOK_NAME
+    pending.replace(target)
+    return target
+
+
 def clean_local_workbook_path(value: str) -> Path:
     cleaned = (value or "").strip().strip("\"'")
     return Path(cleaned).expanduser()
@@ -2021,6 +2038,131 @@ def map_sheet_row_to_patient_payload(
     }
 
 
+def normalized_patient_key(doctor_name: str, patient_name: str) -> str:
+    return f"{normalize_header(doctor_name)}::{normalize_header(patient_name)}"
+
+
+def read_workbook_patient_payloads(workbook_path: Path, doctor_sheets: list[str]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for sheet_name in doctor_sheets:
+        dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=None, dtype=object)
+        values = dataframe.fillna("").values.tolist()
+        headers, data_rows = detect_sheet_header_and_rows(values)
+        if not headers or "patient_name" not in headers:
+            continue
+
+        header_row_number = next(
+            (
+                idx
+                for idx, row in enumerate(values, start=1)
+                if detect_sheet_header_and_rows([row])[0] == headers
+            ),
+            1,
+        )
+
+        for row_offset, row in enumerate(data_rows, start=1):
+            row_number = header_row_number + row_offset
+            padded = row + [""] * (len(headers) - len(row))
+            row_data = dict(zip(headers, padded))
+            payload = map_sheet_row_to_patient_payload(row_data, sheet_name, sheet_name, row_number)
+            if not payload["name"]:
+                continue
+            records.append(
+                {
+                    "sheet_name": sheet_name,
+                    "row_number": row_number,
+                    "row_data": row_data,
+                    "payload": payload,
+                    "cycle_dates": extract_cycle_dates(row_data),
+                    "source_key": (sheet_name, row_number),
+                    "patient_key": normalized_patient_key(sheet_name, str(payload["name"])),
+                }
+            )
+    return records
+
+
+def analyze_workbook_sync(workbook_path: Path | None = None, selected_sheets: list[str] | None = None) -> dict[str, object]:
+    workbook_path = workbook_path or find_primary_workbook_file()
+    if workbook_path is None:
+        raise FileNotFoundError("Planilha principal .xlsx não encontrada na pasta do projeto.")
+
+    available_sheets = get_workbook_doctor_sheet_titles(workbook_path)
+    doctor_sheets = selected_sheets or get_included_workbook_sheets(available_sheets)
+    workbook_records = read_workbook_patient_payloads(workbook_path, doctor_sheets)
+    workbook_source_keys = {record["source_key"] for record in workbook_records}
+    workbook_patient_keys = {str(record["patient_key"]) for record in workbook_records}
+
+    conn = get_connection()
+    existing_rows = conn.execute(
+        """
+        SELECT
+            p.id,
+            p.name,
+            d.name AS doctor_name,
+            p.active,
+            p.source_sheet_name,
+            p.source_row_number
+        FROM patients p
+        JOIN doctors d ON d.id = p.doctor_id
+        """
+    ).fetchall()
+    conn.close()
+
+    existing_source_keys = {
+        (row["source_sheet_name"], int(row["source_row_number"]))
+        for row in existing_rows
+        if row["source_sheet_name"] is not None and row["source_row_number"] is not None
+    }
+    existing_patient_keys = {
+        normalized_patient_key(row["doctor_name"], row["name"])
+        for row in existing_rows
+    }
+    existing_sourced_rows = [
+        row
+        for row in existing_rows
+        if row["source_sheet_name"] is not None and row["source_row_number"] is not None
+    ]
+    missing_from_workbook = [
+        row
+        for row in existing_sourced_rows
+        if (row["source_sheet_name"], int(row["source_row_number"])) not in workbook_source_keys
+        and normalized_patient_key(row["doctor_name"], row["name"]) not in workbook_patient_keys
+    ]
+
+    new_records = [
+        record
+        for record in workbook_records
+        if record["source_key"] not in existing_source_keys
+        and str(record["patient_key"]) not in existing_patient_keys
+    ]
+    matched_records = [record for record in workbook_records if record not in new_records]
+    duplicates = int(len(workbook_records) - len(workbook_patient_keys))
+    active_existing = sum(1 for row in existing_rows if int(row["active"] or 0) == 1)
+    delta = len(workbook_records) - active_existing
+
+    return {
+        "workbook_path": str(workbook_path),
+        "workbook_name": workbook_path.name,
+        "available_sheets": available_sheets,
+        "doctor_sheets": doctor_sheets,
+        "source_total": len(workbook_records),
+        "existing_active_total": active_existing,
+        "new_total": len(new_records),
+        "matched_total": len(matched_records),
+        "missing_total": len(missing_from_workbook),
+        "duplicates_total": duplicates,
+        "delta": delta,
+        "new_examples": [
+            {"Médico": record["sheet_name"], "Paciente": record["payload"]["name"]}
+            for record in new_records[:12]
+        ],
+        "missing_examples": [
+            {"Médico": row["doctor_name"], "Paciente": row["name"]}
+            for row in missing_from_workbook[:12]
+        ],
+    }
+
+
 def sync_google_sheets_to_db() -> tuple[int, int]:
     workbook_path = find_primary_workbook_file()
     if workbook_path is None:
@@ -2028,6 +2170,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
 
     available_doctor_sheets = get_workbook_doctor_sheet_titles(workbook_path)
     doctor_sheets = get_included_workbook_sheets(available_doctor_sheets)
+    workbook_records = read_workbook_patient_payloads(workbook_path, doctor_sheets)
     conn = get_connection()
     existing_patient_state = {
         (row["source_sheet_name"], int(row["source_row_number"])): {
@@ -2100,28 +2243,12 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
     imported = 0
     updated = 0
 
-    for sheet_name in doctor_sheets:
-        dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=None, dtype=object)
-        values = dataframe.fillna("").values.tolist()
-        headers, data_rows = detect_sheet_header_and_rows(values)
-        if not headers or "patient_name" not in headers:
-            continue
-
-        doctor_id = get_or_create_doctor_id_in_conn(conn, sheet_name)
-        header_row_number = next(
-            (
-                idx
-                for idx, row in enumerate(values, start=1)
-                if detect_sheet_header_and_rows([row])[0] == headers
-            ),
-            1,
-        )
-
-        for row_offset, row in enumerate(data_rows, start=1):
-            row_number = header_row_number + row_offset
-            padded = row + [""] * (len(headers) - len(row))
-            row_data = dict(zip(headers, padded))
-            payload = map_sheet_row_to_patient_payload(row_data, sheet_name, sheet_name, row_number)
+    for record in workbook_records:
+            sheet_name = str(record["sheet_name"])
+            row_number = int(record["row_number"])
+            row_data = record["row_data"]
+            payload = dict(record["payload"])
+            doctor_id = get_or_create_doctor_id_in_conn(conn, sheet_name)
             existing_state = existing_patient_state.get((sheet_name, row_number))
             if existing_state:
                 for field_name in [
@@ -2183,7 +2310,7 @@ def sync_google_sheets_to_db() -> tuple[int, int]:
             imported += 1
             patient_id = int(cursor.lastrowid)
 
-            cycle_dates = extract_cycle_dates(row_data)
+            cycle_dates = record["cycle_dates"]
             if not cycle_dates and payload["scheduled_cycle_date"]:
                 fallback_date = parse_date(payload["scheduled_cycle_date"])
                 cycle_dates = [fallback_date] if fallback_date else []
@@ -4204,6 +4331,38 @@ def render_import_tab() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_sync_preview(preview: dict[str, object]) -> None:
+    st.markdown("**Prévia da sincronização**")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        render_metric("Na planilha", str(preview["source_total"]), "Registros lidos nas abas escolhidas.", "metric-a")
+    with col2:
+        render_metric("Base atual", str(preview["existing_active_total"]), "Pacientes ativos antes de aplicar.", "metric-b")
+    with col3:
+        render_metric("Novos", str(preview["new_total"]), "Entrariam como novos registros.", "metric-c")
+    with col4:
+        render_metric("Não encontrados", str(preview["missing_total"]), "Estão no app, mas não apareceram na planilha.", "metric-d")
+
+    delta = int(preview["delta"])
+    duplicates = int(preview["duplicates_total"])
+    if abs(delta) >= 5 or int(preview["missing_total"]) > 0:
+        st.warning(
+            "Atenção: a planilha tem diferença relevante em relação à base atual. "
+            "Confira os exemplos abaixo antes de confirmar."
+        )
+    elif duplicates:
+        st.info("A planilha tem pacientes repetidos. Isso pode ser correto quando há mais de um ciclo/registro.")
+    else:
+        st.success("A prévia não encontrou queda relevante de pacientes.")
+
+    if preview["new_examples"]:
+        st.write("**Exemplos de novos registros**")
+        st.dataframe(pd.DataFrame(preview["new_examples"]), use_container_width=True, hide_index=True)
+    if preview["missing_examples"]:
+        st.write("**Exemplos que não aparecem na nova planilha**")
+        st.dataframe(pd.DataFrame(preview["missing_examples"]), use_container_width=True, hide_index=True)
+
+
 def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Planilha principal</div>', unsafe_allow_html=True)
@@ -4214,15 +4373,23 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
 
     col1, col2 = st.columns([1, 1.3])
     with col1:
-        if st.button("Sincronizar agora com a planilha principal", use_container_width=True):
+        if st.button("Analisar planilha principal", use_container_width=True):
             try:
                 refresh_microsoft_workbook_if_configured()
-                imported, updated = sync_google_sheets_to_db()
-                st.success(f"Sincronização concluída: {imported} novo(s) e {updated} atualizado(s).")
-                st.rerun()
+                st.session_state["primary_sync_preview"] = analyze_workbook_sync()
             except Exception as exc:
-                st.error(f"Não consegui sincronizar com a planilha principal. Detalhe: {exc}")
-        st.caption("A sincronizacao usa as abas com nome de medico, como `Dr.` e `Dra.`.")
+                st.error(f"Não consegui analisar a planilha principal. Detalhe: {exc}")
+        st.caption("Primeiro analise. O app só sincroniza depois da confirmação.")
+        if st.session_state.get("primary_sync_preview"):
+            render_sync_preview(st.session_state["primary_sync_preview"])
+            if st.button("Confirmar sincronização analisada", use_container_width=True, type="primary"):
+                try:
+                    imported, updated = sync_google_sheets_to_db()
+                    st.session_state.pop("primary_sync_preview", None)
+                    st.success(f"Sincronização concluída: {imported} registro(s) importado(s).")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Não consegui sincronizar com a planilha principal. Detalhe: {exc}")
 
     with col2:
         workbook_file = find_primary_workbook_file()
@@ -4255,16 +4422,30 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
                 available_sheets,
                 default=included_sheets,
             )
-            if st.button("Salvar abas e ressincronizar", use_container_width=True):
+            if st.button("Analisar abas selecionadas", use_container_width=True):
                 if not selected_sheets:
                     st.warning("Selecione pelo menos uma aba.")
                 else:
-                    set_included_workbook_sheets(selected_sheets)
-                    imported, updated = sync_google_sheets_to_db()
-                    st.success(
-                        f"Abas salvas e base refeita com {len(selected_sheets)} aba(s): {imported} paciente(s)."
+                    st.session_state["sheet_sync_selection"] = selected_sheets
+                    st.session_state["sheet_sync_preview"] = analyze_workbook_sync(
+                        workbook_file_for_sheets,
+                        selected_sheets,
                     )
-                    st.rerun()
+            if st.session_state.get("sheet_sync_preview"):
+                render_sync_preview(st.session_state["sheet_sync_preview"])
+                if st.button("Confirmar abas e sincronizar", use_container_width=True, type="primary"):
+                    try:
+                        selected_for_sync = st.session_state.get("sheet_sync_selection", selected_sheets)
+                        set_included_workbook_sheets(selected_for_sync)
+                        imported, updated = sync_google_sheets_to_db()
+                        st.session_state.pop("sheet_sync_preview", None)
+                        st.session_state.pop("sheet_sync_selection", None)
+                        st.success(
+                            f"Abas salvas e base sincronizada com {len(selected_for_sync)} aba(s): {imported} registro(s)."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não consegui confirmar a sincronização. Detalhe: {exc}")
         except Exception as exc:
             st.error(f"Não consegui listar as abas da planilha. Detalhe: {exc}")
 
@@ -4316,7 +4497,7 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
             value=saved_local_path,
             placeholder="/Users/seu-usuario/Library/CloudStorage/OneDrive-.../PLANILHA.xlsx",
         )
-        local_submit = st.form_submit_button("Usar caminho local e sincronizar", use_container_width=True)
+        local_submit = st.form_submit_button("Analisar caminho local", use_container_width=True)
     if local_submit:
         try:
             candidate_path = clean_local_workbook_path(local_workbook_path)
@@ -4330,11 +4511,20 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
             if candidate_path.suffix.lower() != ".xlsx":
                 raise ValueError("O arquivo precisa estar no formato .xlsx.")
             set_app_state(LOCAL_WORKBOOK_PATH_KEY, str(candidate_path))
-            imported, updated = sync_google_sheets_to_db()
-            st.success(f"Caminho local salvo e sincronizado: {imported} novo(s) e {updated} atualizado(s).")
-            st.rerun()
+            st.session_state["local_workbook_preview"] = analyze_workbook_sync(candidate_path)
+            st.success("Caminho local salvo. Confira a prévia antes de sincronizar.")
         except Exception as exc:
             st.error(f"Não consegui usar esse caminho local. Detalhe: {exc}")
+    if st.session_state.get("local_workbook_preview"):
+        render_sync_preview(st.session_state["local_workbook_preview"])
+        if st.button("Confirmar caminho local e sincronizar", use_container_width=True, type="primary"):
+            try:
+                imported, updated = sync_google_sheets_to_db()
+                st.session_state.pop("local_workbook_preview", None)
+                st.success(f"Caminho local sincronizado: {imported} registro(s).")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não consegui sincronizar o caminho local. Detalhe: {exc}")
 
     st.markdown("---")
     st.markdown("**Trocar a fonte da planilha**")
@@ -4348,12 +4538,24 @@ def render_google_sync_tab(patients_df: pd.DataFrame) -> None:
         key="primary_workbook_uploader",
     )
     if uploaded_workbook is not None:
-        if st.button("Usar esta planilha como fonte principal", use_container_width=True, key="save_primary_workbook"):
+        if st.button("Analisar esta planilha antes de trocar", use_container_width=True, key="analyze_primary_workbook"):
             try:
-                saved_path = save_uploaded_primary_workbook(uploaded_workbook)
+                pending_path = save_pending_primary_workbook(uploaded_workbook)
+                st.session_state["pending_workbook_preview"] = analyze_workbook_sync(pending_path)
+                st.session_state["pending_workbook_name"] = uploaded_workbook.name
+            except Exception as exc:
+                st.error(f"Não consegui analisar a nova planilha. Detalhe: {exc}")
+    if st.session_state.get("pending_workbook_preview"):
+        st.info(f"Arquivo pendente: `{st.session_state.get('pending_workbook_name', PENDING_WORKBOOK_NAME)}`")
+        render_sync_preview(st.session_state["pending_workbook_preview"])
+        if st.button("Confirmar troca da fonte e sincronizar", use_container_width=True, type="primary"):
+            try:
+                saved_path = promote_pending_primary_workbook()
                 imported, updated = sync_google_sheets_to_db()
+                st.session_state.pop("pending_workbook_preview", None)
+                st.session_state.pop("pending_workbook_name", None)
                 st.success(
-                    f"Nova fonte salva em `{saved_path.name}` e sincronizada com sucesso: {imported} novo(s) e {updated} atualizado(s)."
+                    f"Nova fonte salva em `{saved_path.name}` e sincronizada com sucesso: {imported} registro(s)."
                 )
                 st.rerun()
             except Exception as exc:
