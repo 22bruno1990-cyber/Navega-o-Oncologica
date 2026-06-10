@@ -1,6 +1,6 @@
 # OncoNavega
 
-Produto em `Streamlit` para apoiar clínicas de oncologia e profissionais de navegação na operação dos pacientes em tratamento sistêmico.
+Produto em `Streamlit` para apoiar profissionais de navegação oncológica na operação dos pacientes em tratamento sistêmico, com possibilidade de evolução posterior para clínicas.
 
 **Promessa:** navegação oncológica para proteger ciclos, agenda e receita.
 
@@ -22,46 +22,47 @@ O produto transforma planilhas e controles manuais em uma fila operacional clara
 
 ## Como ganhar dinheiro com o projeto
 
-O caminho mais forte é vender redução de perda operacional e aumento de previsibilidade da agenda. Em oncologia, um ciclo atrasado pode gerar retrabalho, risco assistencial, frustração do paciente e perda de receita de infusão. O app deve ser vendido como uma ferramenta para proteger a agenda e dar visibilidade para clínica, médicos e equipe administrativa.
+O caminho mais forte é vender produtividade profissional, redução de retrabalho e previsibilidade da jornada. Em oncologia, um ciclo atrasado pode gerar cobrança manual, ruído entre áreas e perda de controle operacional. O app deve começar como uma ferramenta premium para profissionais de alto nível que precisam organizar carteira, ciclos, prescrição, autorização e agenda.
 
 ### Estratégia comercial recomendada
 
-Use um modelo híbrido:
+Use um modelo em duas etapas:
 
 ```text
-profissional adota -> profissional mostra valor -> clínica contrata
+profissional premium adota -> produto prova valor -> clínica pode virar etapa futura
 ```
 
-O profissional de navegação, enfermagem coordenadora ou secretaria especializada sente a dor no dia a dia e pode começar com uma carteira individual. A clínica vira o cliente principal quando precisa de multiusuário, dados centralizados, governança, backup, relatórios e padronização do processo.
+O profissional de navegação, enfermeira navegadora, médica assistente ou profissional de coordenação sente a dor no dia a dia e pode começar com uma carteira individual. A clínica só vira etapa posterior quando houver necessidade real de multiusuário, dados centralizados, governança, backup, relatórios e padronização do processo.
 
 ### Cliente ideal inicial
 
 - profissional que acompanha pacientes oncológicos em uma ou mais clínicas
-- clínicas de oncologia com 3 a 15 médicos
+- enfermeiras navegadoras, médicas assistentes e profissionais de acompanhamento oncológico
 - operações que usam Excel, WhatsApp e memória da equipe
 - serviços com dor real em autorização de convênio e agenda de infusão
-- clínicas que ainda não têm um módulo de navegação bem resolvido no sistema principal
+- clínicas que ainda não têm um módulo de navegação bem resolvido no sistema principal, apenas como expansão futura
 
 ### Oferta recomendada
 
-O OncoNavega não deve ser vendido como agenda barata. A tese é operação crítica de navegação oncológica: proteger ciclo, prescrição, autorização, agenda e receita.
+O OncoNavega não deve ser vendido como agenda barata. A tese é produtividade profissional premium em navegação oncológica: proteger ciclo, prescrição, autorização, agenda e clareza operacional.
 
-1. Plano profissional: `R$ 349` por mês, com instância separada
-2. Oferta fundadora opcional: `R$ 299` por mês por 3 meses
-3. Piloto assistido: `R$ 3.000` a `R$ 8.000` por 30 a 45 dias
-4. Mensalidade clínica: a partir de `R$ 1.500` por unidade/mês
-5. Clínica com customização e suporte: `R$ 2.500` a `R$ 6.000` por unidade/mês
-6. Implantação enterprise: `R$ 15.000+` para múltiplas unidades, integrações e governança
+1. Piloto profissional 90 dias: `R$ 850`, com instância separada, implantação leve e limite de uso
+2. Plano profissional: `R$ 297` por mês, com instância separada e até 30 casos ativos
+3. Plano profissional Pro: `R$ 497` por mês, com até 80 casos ativos, templates, exportações e prioridade de evolução
+4. Plano profissional Premium: `R$ 697` por mês, com até 150 casos ativos, acompanhamento mensal e prioridade ampliada
+5. Mensalidade clínica futura: a partir de `R$ 1.500` por unidade/mês
+6. Clínica com customização e suporte: `R$ 2.500` a `R$ 6.000` por unidade/mês
+7. Implantação enterprise: `R$ 15.000+` para múltiplas unidades, integrações e governança
 
 ### Modelo de licença MVP
 
 Para novos profissionais, use instância separada:
 
 ```text
-1 licença profissional = 1 instância + 1 usuário principal + 1 base de pacientes
+1 licença profissional = 1 instância + 1 usuário principal + até 30 casos ativos
 ```
 
-Cada profissional deve ter link próprio, banco próprio, planilha/base própria e usuário/senha próprios no Streamlit Secrets. Isso evita mistura de pacientes, reduz risco de acesso indevido, simplifica LGPD no MVP e deixa a cobrança por licença mais clara.
+Cada profissional deve ter link próprio, banco próprio, planilha/base própria e usuário/senha próprios no Streamlit Secrets. O limite de uso deve ser por casos ativos, exportações, templates e suporte, não por tempo conectado ao app. Isso evita mistura de pacientes, reduz risco de acesso indevido, simplifica LGPD no MVP e deixa a cobrança por licença mais clara.
 
 Para clínicas, o modelo evolui para plano institucional com multiusuário, governança, suporte, backup e relatórios.
 
@@ -96,9 +97,9 @@ Nesse cenário, uma mensalidade de `R$ 3.500` fica ancorada em uma tese de retor
 1. Profissional testa: organizar uma carteira individual com dados mínimos, autorizados ou anonimizados.
 2. Relatório de valor: mostrar pendências, ciclos próximos e riscos que a clínica deveria acompanhar.
 3. Convite interno: profissional apresenta o resumo para gestor, médico líder ou faturamento.
-4. Piloto assistido: clínica usa por 30 a 45 dias com uma meta objetiva.
-5. Contrato mensal: converter em assinatura com multiusuário, suporte, backup e governança.
-6. Expansão: adicionar unidades, integrações, indicadores financeiros e treinamento recorrente.
+4. Piloto profissional 90 dias: profissional usa com instância própria, limite de casos e meta objetiva.
+5. Contrato mensal: converter em assinatura individual de R$ 297/mês, Pro de R$ 497/mês ou Premium de R$ 697/mês.
+6. Expansão: só depois adicionar clínica, multiusuário, integrações, indicadores financeiros e treinamento recorrente.
 
 ## Materiais comerciais gerados pelo app
 
@@ -109,7 +110,7 @@ A aba `Modelo comercial` inclui duas entregas para apoiar venda:
 - `Baixar one-page do produto`: página HTML com nome, promessa, oferta e tese de valor do OncoNavega.
 - mensagens prontas para WhatsApp e e-mail de abordagem.
 - playbook de venda por modo: profissional navegador ou clínica/gestor.
-- pacote de piloto assistido de 30 a 45 dias com etapas, entregáveis e meta.
+- pacote profissional de 90 dias por R$ 850, com etapas, entregáveis e meta.
 
 Os materiais podem ser baixados em Markdown. A proposta também pode ser baixada como uma página HTML simples para envio ou abertura no navegador.
 
@@ -137,7 +138,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-O login padrão local é configurado por variável de ambiente ou por `.streamlit/secrets.toml`. Se nada for configurado, o app usa credenciais locais de desenvolvimento.
+O login deve ser configurado por variável de ambiente ou por `.streamlit/secrets.toml`. Se nada for configurado, o app bloqueia o acesso para evitar credenciais padrão em produção.
 
 ## Publicar no Streamlit Community Cloud
 
@@ -169,8 +170,8 @@ Observações:
 - sincronização manual da planilha principal
 - troca da planilha principal pela interface do app
 - vínculo com planilha online Microsoft por link compartilhado do Excel Online, OneDrive ou SharePoint
-- aba `Modelo comercial` com funil profissional-clínica, pacotes premium, ROI, modelo de licença por instância, apresentação externa, proposta comercial e roteiro de venda
-- mensagens de abordagem comercial e pacote de piloto assistido de 30 a 45 dias
+- aba `Modelo comercial` com funil profissional primeiro, pacotes premium, ROI, modelo de licença por instância, apresentação externa, proposta comercial e roteiro de venda
+- mensagens de abordagem comercial e pacote profissional de 90 dias por R$ 850
 
 ## Vincular planilha Microsoft online
 

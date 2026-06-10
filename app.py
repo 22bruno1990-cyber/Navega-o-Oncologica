@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import hashlib
 import hmac
 import os
 import json
@@ -18,7 +17,6 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -36,6 +34,12 @@ LAST_MICROSOFT_DOWNLOAD_KEY = "last_microsoft_download_at"
 LOCAL_WORKBOOK_PATH_KEY = "local_workbook_path"
 INCLUDED_WORKBOOK_SHEETS_KEY = "included_workbook_sheets"
 REMEMBERED_AUTH_USER_KEY = "remembered_auth_user"
+DEFAULT_AUTH_USERNAME = "juliana"
+DEFAULT_AUTH_PASSWORD = "Navegacao2026!"
+MAX_LOGIN_ATTEMPTS = 5
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+ALLOWED_TABLE_UPLOAD_SUFFIXES = {".xlsx", ".csv"}
+ALLOWED_WORKBOOK_SUFFIXES = {".xlsx"}
 ONEDRIVE_CLOUDSTORAGE_DIR = Path.home() / "Library" / "CloudStorage"
 APP_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 PRODUCT_NAME = "OncoNavega"
@@ -466,6 +470,39 @@ html, body, [class*="css"] {
     margin: 4px 0 12px 0;
 }
 
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 14px;
+    overflow: hidden;
+    border-radius: 14px;
+    font-size: 0.92rem;
+}
+
+.data-table th {
+    background: #123847;
+    color: #ffffff;
+    text-align: left;
+    padding: 12px 14px;
+}
+
+.data-table td {
+    background: rgba(255, 255, 255, 0.96);
+    border-bottom: 1px solid rgba(15, 61, 76, 0.08);
+    color: #45636f;
+    padding: 12px 14px;
+    vertical-align: top;
+}
+
+.data-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.data-table td:first-child {
+    color: #123847;
+    font-weight: 800;
+}
+
 .sales-step {
     border-left: 4px solid #16697a;
     padding: 4px 0 4px 12px;
@@ -884,68 +921,59 @@ def load_access_credentials() -> dict[str, str]:
     except Exception:
         auth_secrets = {}
 
-    username = secret_username or os.getenv("ONCO_APP_USERNAME") or "juliana"
-    password = secret_password or os.getenv("ONCO_APP_PASSWORD") or "Navegacao2026!"
-    return {"username": str(username), "password": str(password)}
+    configured_username = secret_username or os.getenv("ONCO_APP_USERNAME")
+    configured_password = secret_password or os.getenv("ONCO_APP_PASSWORD")
+    username = configured_username or DEFAULT_AUTH_USERNAME
+    password = configured_password or DEFAULT_AUTH_PASSWORD
+    return {
+        "username": str(username),
+        "password": str(password),
+        "configured": bool(configured_username and configured_password),
+    }
 
 
 def authenticate_access(username: str, password: str) -> bool:
     credentials = load_access_credentials()
-    return username.strip().lower() == credentials["username"].strip().lower() and password == credentials["password"]
+    username_ok = hmac.compare_digest(username.strip().lower(), credentials["username"].strip().lower())
+    password_ok = hmac.compare_digest(password, credentials["password"])
+    return username_ok and password_ok
 
 
-def build_auth_token(username: str) -> str:
+def default_auth_is_enabled() -> bool:
     credentials = load_access_credentials()
-    secret = os.getenv("ONCO_APP_AUTH_SECRET") or credentials["password"]
-    message = f"{credentials['username'].strip().lower()}:{username.strip().lower()}".encode("utf-8")
-    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return not credentials.get("configured")
+
+
+def render_security_configuration_error() -> None:
+    st.error(
+        "Acesso bloqueado: configure usuário e senha próprios desta instância antes de usar o app."
+    )
+    st.info(
+        "Configure `[auth] username` e `[auth] password` no Streamlit Secrets, "
+        "ou defina `ONCO_APP_USERNAME` e `ONCO_APP_PASSWORD` no ambiente."
+    )
+
+
+def validate_uploaded_file(uploaded_file, allowed_suffixes: set[str], max_bytes: int = MAX_UPLOAD_BYTES) -> None:
+    file_name = Path(uploaded_file.name).name
+    suffix = Path(file_name).suffix.lower()
+    if suffix not in allowed_suffixes:
+        allowed = ", ".join(sorted(allowed_suffixes))
+        raise ValueError(f"Arquivo recusado: envie apenas {allowed}.")
+    if uploaded_file.size > max_bytes:
+        raise ValueError("Arquivo recusado: limite de upload de 8 MB.")
 
 
 def restore_auth_from_query_params() -> None:
-    if st.session_state.get("auth_user"):
-        return
-    remembered_user = get_app_state(REMEMBERED_AUTH_USER_KEY)
-    if remembered_user:
-        st.session_state["auth_user"] = remembered_user
-        return
-    auth_user = read_query_param("auth_user")
-    auth_token = read_query_param("auth_token")
-    if not auth_user or not auth_token:
-        return
-    expected_token = build_auth_token(auth_user)
-    if hmac.compare_digest(auth_token, expected_token):
-        st.session_state["auth_user"] = auth_user.strip()
+    clear_auth_query_params()
 
 
 def ensure_persistent_auth_query_params() -> None:
-    auth_user = st.session_state.get("auth_user")
-    if not auth_user:
-        return
-    current_user = read_query_param("auth_user")
-    current_token = read_query_param("auth_token")
-    expected_token = build_auth_token(str(auth_user))
-    if current_user != str(auth_user) or current_token != expected_token:
-        persist_auth_in_query_params(str(auth_user))
-        components.html(
-            f"""
-            <script>
-                const url = new URL(window.parent.location.href);
-                url.searchParams.set("auth_user", {json.dumps(str(auth_user))});
-                url.searchParams.set("auth_token", {json.dumps(expected_token)});
-                window.parent.history.replaceState(null, "", url.toString());
-            </script>
-            """,
-            height=0,
-        )
+    clear_auth_query_params()
 
 
 def persist_auth_in_query_params(username: str) -> None:
-    st.query_params.update(
-        {
-            "auth_user": username.strip(),
-            "auth_token": build_auth_token(username),
-        }
-    )
+    clear_auth_query_params()
 
 
 def clear_auth_query_params() -> None:
@@ -957,6 +985,12 @@ def clear_auth_query_params() -> None:
 def ensure_auth_session_state() -> None:
     if "auth_user" not in st.session_state:
         st.session_state["auth_user"] = None
+    if "auth_failed_attempts" not in st.session_state:
+        st.session_state["auth_failed_attempts"] = 0
+
+
+def auth_is_locked() -> bool:
+    return int(st.session_state.get("auth_failed_attempts", 0)) >= MAX_LOGIN_ATTEMPTS
 
 
 def render_login_gate() -> None:
@@ -1001,6 +1035,16 @@ def render_login_gate() -> None:
     st.markdown('<div class="section-title">Acesso ao painel</div>', unsafe_allow_html=True)
     st.caption("Entre com o usuário e a senha configurados para este aplicativo.")
 
+    if default_auth_is_enabled():
+        render_security_configuration_error()
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+
+    if auth_is_locked():
+        st.error("Acesso temporariamente bloqueado por excesso de tentativas inválidas. Recarregue a sessão após revisar as credenciais.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+
     with st.form("login_gate_form"):
         username = st.text_input("Usuário")
         password = st.text_input("Senha", type="password")
@@ -1009,11 +1053,11 @@ def render_login_gate() -> None:
             if authenticate_access(username, password):
                 normalized_username = username.strip()
                 st.session_state["auth_user"] = normalized_username
-                set_app_state(REMEMBERED_AUTH_USER_KEY, normalized_username)
-                persist_auth_in_query_params(normalized_username)
+                st.session_state["auth_failed_attempts"] = 0
                 st.success("Acesso liberado.")
                 st.rerun()
             else:
+                st.session_state["auth_failed_attempts"] = int(st.session_state.get("auth_failed_attempts", 0)) + 1
                 st.error("Usuário ou senha inválidos.")
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1337,6 +1381,7 @@ def find_primary_workbook_file() -> Path | None:
 
 
 def save_uploaded_primary_workbook(uploaded_file) -> Path:
+    validate_uploaded_file(uploaded_file, ALLOWED_WORKBOOK_SUFFIXES)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     target = DATA_DIR / UPLOADED_WORKBOOK_NAME
     target.write_bytes(uploaded_file.getbuffer())
@@ -1344,6 +1389,7 @@ def save_uploaded_primary_workbook(uploaded_file) -> Path:
 
 
 def save_pending_primary_workbook(uploaded_file) -> Path:
+    validate_uploaded_file(uploaded_file, ALLOWED_WORKBOOK_SUFFIXES)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     target = DATA_DIR / PENDING_WORKBOOK_NAME
     target.write_bytes(uploaded_file.getbuffer())
@@ -1982,6 +2028,7 @@ def import_patients_dataframe(df: pd.DataFrame) -> tuple[int, int]:
 
 
 def load_uploaded_dataframe(uploaded_file) -> pd.DataFrame:
+    validate_uploaded_file(uploaded_file, ALLOWED_TABLE_UPLOAD_SUFFIXES)
     file_name = uploaded_file.name.lower()
     if file_name.endswith(".csv"):
         return pd.read_csv(uploaded_file)
@@ -3238,11 +3285,16 @@ def render_dashboard(
 def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd.DataFrame) -> None:
     active_patients = len(filtered_patients)
     monthly_sessions = 0
-    professional_price = 349
-    founder_price = 299
+    professional_price = 297
+    pilot_90_days_price = 850
+    professional_case_limit = 30
+    pro_price = 497
+    pro_case_limit = 80
+    premium_price = 697
+    premium_case_limit = 150
     clinic_entry_price = 1500
     clinic_premium_range = "R$ 2.500 a R$ 6.000/mês"
-    pilot_range = "R$ 3.000 a R$ 8.000"
+    pilot_range = f"R$ {pilot_90_days_price}"
     if not filtered_sessions.empty:
         sessions_df = filtered_sessions.copy()
         sessions_df["scheduled_dt"] = pd.to_datetime(sessions_df["scheduled_date"], errors="coerce")
@@ -3262,15 +3314,15 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
 
     st.markdown("")
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Estratégia: profissional adota, clínica contrata</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Estratégia: profissional primeiro, clínica depois</div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="subtle">
-            O profissional de navegação sente a dor todos os dias e pode começar usando o app para organizar
-            a própria carteira. A clínica compra quando percebe que precisa centralizar os dados, liberar acesso
-            para a equipe, padronizar o processo e proteger agenda, receita e governança.
-            O preço deve refletir operação crítica, não agenda genérica: se um ciclo atrasado for evitado,
-            o sistema já pode se pagar.
+            O profissional de navegação sente a dor todos os dias e pode começar em uma instância individual,
+            com escopo controlado e limites claros de uso. A clínica fica como expansão posterior, quando houver
+            maturidade para multiusuário, governança, suporte e responsabilidade institucional.
+            O preço deve refletir operação crítica, não agenda genérica, sem transformar o MVP em sistema oficial
+            da clínica antes da hora.
         </div>
         """,
         unsafe_allow_html=True,
@@ -3316,7 +3368,7 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
         </div>
       </div>
       <h1>{PRODUCT_TAGLINE}</h1>
-      <p>Produto para clínicas e profissionais de navegação que precisam transformar planilhas, mensagens e cobranças soltas em uma operação rastreável por ciclo.</p>
+      <p>Produto para profissionais de navegação que precisam transformar planilhas, mensagens e cobranças soltas em uma operação rastreável por ciclo, com escopo individual e limites claros de uso.</p>
       <div class="chips">
         <div class="chip">Fila prioritária</div>
         <div class="chip">Agenda de infusão</div>
@@ -3327,25 +3379,25 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
     <section>
       <h2>Para quem é</h2>
       <div class="grid">
-        <div class="card"><h3>Profissional navegador</h3><p>Organiza a carteira, prioriza cobranças e leva um resumo claro para a clínica.</p></div>
-        <div class="card"><h3>Clínica oncológica</h3><p>Centraliza operação, reduz ciclos em risco e ganha governança sobre agenda e autorizações.</p></div>
-        <div class="card"><h3>Gestão e faturamento</h3><p>Enxerga gargalos antes que virem atraso, retrabalho ou perda de previsibilidade.</p></div>
+        <div class="card"><h3>Enfermeira navegadora</h3><p>Organiza a carteira, prioriza cobranças e acompanha pendências sem depender de planilhas soltas.</p></div>
+        <div class="card"><h3>Médica assistente</h3><p>Ganha uma visão operacional de ciclos, prescrições, autorizações e retornos em acompanhamento.</p></div>
+        <div class="card"><h3>Profissional premium</h3><p>Usa uma instância própria para elevar produtividade, clareza e padrão de acompanhamento.</p></div>
       </div>
     </section>
     <section>
       <h2>Oferta inicial</h2>
       <div class="grid">
-        <div class="card"><h3>Profissional</h3><div class="price">R$ {professional_price}/mês</div><p>Instância própria, carteira individual, alertas e resumo para apresentar à clínica.</p></div>
-        <div class="card"><h3>Clínica</h3><div class="price">a partir de R$ 1.500/mês</div><p>Ambiente institucional com equipe, relatórios, suporte, backup e governança.</p></div>
-        <div class="card"><h3>Piloto assistido</h3><div class="price">{pilot_range}</div><p>30 a 45 dias com implantação assistida, relatório semanal e reunião de fechamento.</p></div>
+        <div class="card"><h3>Profissional</h3><div class="price">R$ {professional_price}/mês</div><p>Instância própria para 1 profissional, até {professional_case_limit} casos ativos e suporte assíncrono.</p></div>
+        <div class="card"><h3>Piloto 90 dias</h3><div class="price">{pilot_range}</div><p>Entrada profissional com implantação leve, uso limitado e transição natural para mensalidade.</p></div>
+        <div class="card"><h3>Profissional Premium</h3><div class="price">R$ {premium_price}/mês</div><p>Até {premium_case_limit} casos ativos, revisão mensal e maior prioridade de evolução.</p></div>
       </div>
     </section>
     <section>
       <h2>Modelo de licença</h2>
       <ul>
-        <li>1 licença profissional = 1 instância + 1 usuário principal + 1 base de pacientes.</li>
-        <li>Cada profissional começa em ambiente separado, sem misturar dados de outros usuários.</li>
-        <li>Para clínicas, migramos para plano institucional com usuários, governança e suporte.</li>
+        <li>1 licença profissional = 1 instância + 1 usuário principal + até {professional_case_limit} casos ativos.</li>
+        <li>O limite de uso é por volume e escopo, não por tempo conectado ao aplicativo.</li>
+        <li>Para clínicas, migramos depois para plano institucional com usuários, governança e suporte.</li>
       </ul>
     </section>
     <section>
@@ -3391,18 +3443,18 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
                 "Organize sua carteira em uma instância própria, com base separada, e gere um resumo objetivo "
                 "para mostrar à clínica onde existem riscos de prescrição, autorização, agenda e próximo ciclo."
             )
-            mode_cta = f"Comece com o plano profissional de R$ {professional_price}/mês ou oferta fundadora de R$ {founder_price}/mês por 3 meses."
+            mode_cta = f"Comece com o piloto profissional de 90 dias por R$ {pilot_90_days_price} ou mensalidade de R$ {professional_price}/mês."
             mode_bullets = [
                 "Menos dependência de planilhas soltas.",
                 "Mais clareza sobre quem cobrar hoje.",
-                "Ambiente separado para não misturar bases de pacientes.",
+                f"Até {professional_case_limit} casos ativos no plano profissional.",
             ]
         else:
             mode_pitch = (
                 "Centralize a operação de navegação oncológica, reduza ciclos em risco e acompanhe a agenda "
                 "com indicadores para gestão, médicos, navegação e faturamento."
             )
-            mode_cta = "Contrate um piloto assistido de 30 a 45 dias com meta operacional e relatório semanal."
+            mode_cta = "Use a trilha profissional primeiro; o plano clínica entra depois, quando houver demanda por multiusuário e governança."
             mode_bullets = [
                 "Multiusuário e governança dos dados.",
                 "Fila prioritária por risco operacional.",
@@ -3445,9 +3497,9 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
         (
             "Contrato que sustenta",
             [
-                "Plano clínica a partir de R$ 1.500/mês com multiusuário, relatórios e governança.",
-                "Implantação com a planilha atual e rotina da equipe.",
-                "Mensalidade ancorada em receita preservada e menor retrabalho.",
+            "Plano clínica fica para etapa posterior, com multiusuário, relatórios e governança.",
+            "Implantação com a planilha atual e rotina da equipe.",
+            "Mensalidade ancorada em receita preservada e menor retrabalho.",
             ],
         ),
     ]
@@ -3465,31 +3517,70 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
             )
 
     st.markdown("")
+    monthly_plan_rows = [
+        ("Profissional", f"R$ {professional_price}/mês", f"Até {professional_case_limit} casos ativos", "Instância separada, 1 usuário principal e suporte assíncrono."),
+        ("Profissional Pro", f"R$ {pro_price}/mês", f"Até {pro_case_limit} casos ativos", "Templates, exportações e prioridade de melhorias."),
+        ("Profissional Premium", f"R$ {premium_price}/mês", f"Até {premium_case_limit} casos ativos", "Acompanhamento mensal, maior volume e priorização de evolução."),
+        ("Clínica futura", f"R$ {clinic_entry_price}+/mês", "Multiusuário", "Etapa posterior, com governança, relatórios e suporte institucional."),
+    ]
+    monthly_rows_html = "".join(
+        f"""
+        <tr>
+            <td>{category}</td>
+            <td><strong>{price}</strong></td>
+            <td>{limit}</td>
+            <td>{scope}</td>
+        </tr>
+        """
+        for category, price, limit, scope in monthly_plan_rows
+    )
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Mensalidades em ordem crescente</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="subtle">O piloto de R$ {pilot_90_days_price} é a porta de entrada de 90 dias. Depois dele, a continuidade fica organizada por categoria mensal.</div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Categoria</th>
+                    <th>Mensalidade</th>
+                    <th>Limite</th>
+                    <th>Escopo</th>
+                </tr>
+            </thead>
+            <tbody>{monthly_rows_html}</tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("")
     price_cols = st.columns(4)
     price_cards = [
         (
             "Profissional",
             f"R$ {professional_price}",
             "por mês",
-            ["Instância separada", "1 usuário principal", "1 base de pacientes"],
+            ["Instância separada", "1 usuário principal", f"Até {professional_case_limit} casos ativos"],
         ),
         (
-            "Fundador",
-            f"R$ {founder_price}",
-            "por mês por 3 meses",
-            ["Oferta early adopter", "Feedback estruturado", "Setup simples incluso"],
+            "Piloto 90 dias",
+            f"R$ {pilot_90_days_price}",
+            "pagamento único",
+            ["Entrada premium", "Implantação leve", f"Até {professional_case_limit} casos ativos"],
         ),
         (
-            "Clínica",
-            "R$ 1.500+",
-            "por unidade/mês",
-            ["Multiusuário e perfis", "Relatórios gerenciais", clinic_premium_range],
+            "Profissional Pro",
+            f"R$ {pro_price}",
+            "por mês",
+            [f"Até {pro_case_limit} casos ativos", "Templates e exportações", "Prioridade de melhorias"],
         ),
         (
-            "Piloto",
-            pilot_range,
-            "30 a 45 dias",
-            ["Implantação assistida", "Relatório semanal", "Reunião de fechamento"],
+            "Premium",
+            f"R$ {premium_price}",
+            "por mês",
+            [f"Até {premium_case_limit} casos ativos", "Revisão mensal", "Prioridade ampliada"],
         ),
     ]
     for column, (name, value, note, bullets) in zip(price_cols, price_cards):
@@ -3515,7 +3606,8 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
         <div class="subtle">
             No MVP, não libere novos profissionais no mesmo ambiente de outro cliente. Cada profissional começa
             com uma instância própria, separada da base de outros usuários: link próprio, banco próprio,
-            planilha própria e usuário/senha próprios no Streamlit Secrets. Para clínicas, migramos para plano
+            planilha própria e usuário/senha próprios no Streamlit Secrets. O plano profissional limita volume
+            por casos ativos e escopo de suporte, não por tempo de tela. Para clínicas, migramos depois para plano
             institucional com usuários, governança e suporte.
         </div>
         """,
@@ -3523,7 +3615,7 @@ def render_commercial_tab(filtered_patients: pd.DataFrame, filtered_sessions: pd
     )
     access_cols = st.columns(3)
     access_cards = [
-        ("Licença profissional", "1 instância + 1 usuário principal + 1 base de pacientes."),
+        ("Licença profissional", f"1 instância + 1 usuário principal + até {professional_case_limit} casos ativos."),
         ("Por que separar", "Evita mistura de pacientes, reduz risco de acesso indevido e facilita cobrança por licença."),
         ("Quando virar clínica", "Acesso multiusuário, governança, backup e suporte entram no plano institucional."),
     ]
@@ -3580,7 +3672,7 @@ Para clínicas, migramos para plano institucional com usuários, governança, su
 
 ## Próximo passo sugerido
 
-Fazer um piloto assistido de 30 a 45 dias, com uma meta simples:
+Fazer um piloto profissional de 90 dias, com uma meta simples:
 
 - reduzir ciclos com pendência perto da data de infusão
 - antecipar cobranças de prescrição e autorização
@@ -3589,11 +3681,12 @@ Fazer um piloto assistido de 30 a 45 dias, com uma meta simples:
 
 ## Modelo comercial
 
-- Plano profissional: R$ {professional_price}/mês
-- Oferta fundadora: R$ {founder_price}/mês por 3 meses
+- Plano profissional: R$ {professional_price}/mês, até {professional_case_limit} casos ativos
+- Piloto profissional 90 dias: R$ {pilot_90_days_price}, com implantação leve e uso limitado
+- Plano profissional Pro: R$ {pro_price}/mês, até {pro_case_limit} casos ativos
+- Plano profissional Premium: R$ {premium_price}/mês, até {premium_case_limit} casos ativos
 - Plano clínica: a partir de R$ {clinic_entry_price:,.0f}/mês por unidade
 - Clínica com customização e suporte: {clinic_premium_range}
-- Piloto assistido: {pilot_range} por 30 a 45 dias
 - Integrações e expansão: orçamento conforme escopo
 """.replace(",", ".")
         st.markdown(
@@ -3631,7 +3724,7 @@ Fazer um piloto assistido de 30 a 45 dias, com uma meta simples:
             <div class="subtle">
                 Para uso profissional individual, trabalhe com autorização da clínica ou com dados mínimos. 
                 A licença inicial deve ser vendida como instância separada, não como senha compartilhada:
-                um link, um banco e uma base por profissional. Dados identificáveis, multiusuário e relatórios
+                um link, um banco, uma base por profissional e limite de casos ativos. Dados identificáveis, multiusuário e relatórios
                 de gestão devem migrar para o plano clínica, com responsável institucional e rotina de backup.
             </div>
             """,
@@ -3649,7 +3742,7 @@ Na carteira analisada hoje temos {active_patients} paciente(s) ativo(s), {monthl
 
 O produto não é uma agenda genérica: é uma camada operacional para proteger ciclo, prescrição, autorização, agenda e receita.
 
-Acho que vale uma conversa rápida para avaliar um piloto assistido de 30 a 45 dias, com relatório semanal de gargalos e foco em reduzir risco de atraso de ciclo.
+Acho que vale uma conversa rápida para avaliar um piloto profissional de 90 dias por R$ {pilot_90_days_price}, com instância própria, limite de até {professional_case_limit} casos ativos e foco em reduzir risco de atraso de ciclo.
 """
     email_message = f"""Assunto: Piloto de navegação oncológica para reduzir atrasos de ciclo
 
@@ -3659,12 +3752,12 @@ Estou estruturando o {PRODUCT_NAME} para dar visibilidade aos próximos ciclos, 
 
 Na carteira analisada, temos {active_patients} paciente(s) ativo(s), {monthly_sessions} infusão(ões) previstas nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
 
-Minha sugestão é fazermos um piloto assistido de 30 a 45 dias, com:
+Minha sugestão é fazermos um piloto profissional de 90 dias por R$ {pilot_90_days_price}, com:
 
 - carga da planilha atual
 - fila prioritária de pacientes em risco
 - acompanhamento de prescrição, autorização e agenda
-- relatório semanal de gargalos
+- uso limitado a até {professional_case_limit} casos ativos
 - reunião de fechamento com indicadores e próximos passos
 
 O objetivo é reduzir risco de atraso de ciclo, melhorar previsibilidade da agenda e dar mais governança para navegação, médicos, faturamento e gestão.
@@ -3698,15 +3791,15 @@ Para novos profissionais, o acesso começa em instância separada: link próprio
 
     st.markdown("")
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Pacote de piloto assistido de 30 a 45 dias</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Pacote profissional de 90 dias</div>', unsafe_allow_html=True)
     pilot_cols = st.columns(3)
     pilot_steps = [
-        ("Semana 1", "Carga da planilha, ajuste dos campos e definição dos indicadores do piloto."),
-        ("Semanas 2-3", "Uso assistido da fila prioritária, calendário e pendências por ciclo."),
-        ("Semanas 4-5", "Relatórios semanais de gargalos, atrasos evitáveis e oportunidades de processo."),
-        ("Fechamento", "Reunião com ROI estimado, decisão de assinatura e próximos incrementos."),
-        ("Entregáveis", "Painel em uso, rotina documentada, proposta de contrato mensal e backlog de melhorias."),
-        ("Meta do piloto", "Reduzir ciclos em risco e provar valor antes da contratação mensal."),
+        ("Entrada", f"R$ {pilot_90_days_price} por 90 dias, com instância própria e até {professional_case_limit} casos ativos."),
+        ("Primeiros 15 dias", "Carga da planilha, ajuste dos campos e definição dos indicadores do piloto."),
+        ("Dias 16-60", "Uso da fila prioritária, calendário e pendências por ciclo na rotina do profissional."),
+        ("Dias 61-90", "Ajuste fino, revisão dos limites de uso e decisão de continuidade mensal."),
+        ("Entregáveis", "Painel em uso, rotina documentada, resumo de evolução e próximos incrementos."),
+        ("Meta do piloto", "Provar valor profissional antes de qualquer expansão institucional."),
     ]
     for index, (title, copy) in enumerate(pilot_steps):
         with pilot_cols[index % 3]:
@@ -3751,7 +3844,8 @@ Para novos profissionais, o acesso começa em instância separada: link próprio
                 R$ {monthly_ticket:,.0f}, o sistema ajuda a defender cerca de
                 R$ {protected_revenue:,.0f} em receita operacional. Uma mensalidade de
                 R$ {monthly_price:,.0f} para o plano clínica fica ancorada em ROI potencial de {roi_multiple:.1f}x.
-                Para profissional individual, a âncora é R$ {professional_price}/mês em instância separada.
+                Para profissional individual, a âncora é R$ {professional_price}/mês em instância separada, ou
+                R$ {pilot_90_days_price} no piloto de 90 dias com até {professional_case_limit} casos ativos.
             </div>
             """.replace(",", "."),
             unsafe_allow_html=True,
@@ -3773,15 +3867,15 @@ Para novos profissionais, o acesso começa em instância separada: link próprio
         with proposal_col2:
             proposal_plan = st.selectbox(
                 "Plano proposto",
-                ["Piloto assistido", "Plano profissional individual", "Plano clínica mensal", "Implantação enterprise"],
+                ["Piloto profissional 90 dias", "Plano profissional individual", "Plano profissional Pro", "Plano profissional Premium", "Plano clínica mensal", "Implantação enterprise"],
             )
-            pilot_days = st.number_input("Duração do piloto (dias)", min_value=15, max_value=120, value=45, step=15)
+            pilot_days = st.number_input("Duração do piloto (dias)", min_value=15, max_value=120, value=90, step=15)
         with proposal_col3:
-            setup_value = st.number_input("Implantação / piloto (R$)", min_value=0, max_value=100000, value=5000, step=500)
-            proposal_monthly_value = st.number_input("Mensalidade após piloto (R$)", min_value=0, max_value=50000, value=monthly_price, step=500)
+            setup_value = st.number_input("Implantação / piloto (R$)", min_value=0, max_value=100000, value=pilot_90_days_price, step=50)
+            proposal_monthly_value = st.number_input("Mensalidade após piloto (R$)", min_value=0, max_value=50000, value=professional_price, step=50)
         proposal_notes = st.text_area(
             "Escopo e observações",
-            value="Instância separada, carga da planilha atual, treinamento da equipe, painel operacional, relatório semanal de gargalos e reunião de fechamento do piloto.",
+            value=f"Instância separada, carga da planilha atual, painel operacional, uso limitado a até {professional_case_limit} casos ativos, suporte assíncrono e reunião de fechamento do piloto.",
             height=90,
         )
         generate_proposal = st.form_submit_button("Gerar Proposta Comercial", use_container_width=True)
@@ -3803,23 +3897,23 @@ Contato: {contact_name}
 
 ## Resumo executivo
 
-Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar a navegação oncológica da clínica, centralizando carteira de pacientes, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais.
+Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar a navegação oncológica em escopo profissional, centralizando carteira de pacientes, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais.
 
 A análise inicial indica {active_patients} paciente(s) na carteira filtrada, {monthly_sessions} infusão(ões) nos próximos 30 dias e {pending_patients} paciente(s) com algum ponto de atenção operacional ou de protocolo.
 
 ## Objetivo do piloto
 
-Durante {pilot_days} dias, a meta será reduzir riscos de atraso de ciclo e aumentar previsibilidade da agenda de infusão, com foco em:
+Durante {pilot_days} dias, a meta será reduzir riscos de atraso de ciclo e aumentar previsibilidade da rotina do profissional, com foco em:
 
 - antecipar cobrança de prescrição
 - acompanhar autorização do convênio
 - identificar pacientes sem agenda confirmada
 - consolidar a fila prioritária da equipe
-- gerar relatório semanal de gargalos
+- operar até {professional_case_limit} casos ativos no plano profissional
 
 ## Modelo de acesso e licença
 
-No MVP, cada licença profissional é entregue em uma instância separada: um link próprio, um banco próprio, uma base de pacientes e um usuário principal.
+No MVP, cada licença profissional é entregue em uma instância separada: um link próprio, um banco próprio, uma base de pacientes, um usuário principal e limite de até {professional_case_limit} casos ativos.
 
 Para clínicas, o modelo evolui para plano institucional com multiusuário, governança, suporte e rotina de backup.
 
@@ -3834,7 +3928,9 @@ Com mensalidade de {monthly_label}, o ROI potencial estimado é de {roi_multiple
 - Implantação / piloto: {setup_label}
 - Mensalidade após piloto: {monthly_label}
 - Referência profissional individual: R$ {professional_price}/mês
-- Oferta fundadora opcional: R$ {founder_price}/mês por 3 meses
+- Piloto profissional 90 dias: R$ {pilot_90_days_price}
+- Profissional Pro: R$ {pro_price}/mês para até {pro_case_limit} casos ativos
+- Profissional Premium: R$ {premium_price}/mês para até {premium_case_limit} casos ativos
 - Clínica com customização e suporte: {clinic_premium_range}
 - Duração inicial: {pilot_days} dias
 
@@ -3905,7 +4001,7 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
     </header>
     <section>
       <h2>Resumo executivo</h2>
-      <p>Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar carteira, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais.</p>
+      <p>Propomos um {proposal_plan.lower()} com o {PRODUCT_NAME} para organizar carteira, próximos ciclos, prescrição, autorização, agendamento e alertas operacionais em escopo profissional.</p>
       <div class="grid">
         <div class="metric"><strong>{active_patients}</strong>pacientes na carteira</div>
         <div class="metric"><strong>{monthly_sessions}</strong>infusões em 30 dias</div>
@@ -3914,7 +4010,7 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
     </section>
     <section>
       <h2>Modelo de acesso</h2>
-      <p>No MVP, cada licença profissional é entregue em instância separada: link próprio, banco próprio, base própria e um usuário principal.</p>
+      <p>No MVP, cada licença profissional é entregue em instância separada: link próprio, banco próprio, base própria, um usuário principal e limite de até {professional_case_limit} casos ativos.</p>
       <p>Para clínicas, o modelo evolui para ambiente institucional com multiusuário, governança, suporte e backup.</p>
     </section>
     <section>
@@ -3973,8 +4069,8 @@ Realizar uma reunião de alinhamento operacional, validar a planilha-base e defi
             ("1. Profissional testa", "Navegador ou coordenador organiza uma carteira e sente alívio operacional."),
             ("2. Relatório de valor", "O app mostra pendências, ciclos próximos e riscos que a clínica deveria enxergar."),
             ("3. Convite interno", "O profissional apresenta a visão para gestor, médico líder ou faturamento."),
-            ("4. Piloto assistido", "A clínica usa por 30 a 45 dias com meta operacional objetiva."),
-            ("5. Contrato mensal", "A assinatura entra com multiusuário, governança, suporte e relatórios."),
+            ("4. Piloto 90 dias", "O profissional usa por 90 dias com instância própria, limite de casos e meta operacional objetiva."),
+            ("5. Contrato mensal", "A assinatura individual entra por R$ 297/mês; clínica fica para etapa posterior."),
             ("6. Expansão", "Adicionar unidades, integrações, indicadores financeiros e treinamento recorrente."),
         ]
         for title, copy in steps:
@@ -4362,7 +4458,7 @@ def render_import_tab() -> None:
             {
                 "medico": "Dra. Camila Torres",
                 "especialidade": "Oncologia Clinica",
-                "paciente": "Ana Paula Lima",
+                "paciente": "Paciente Demo 001",
                 "diagnostico": "CA colorretal",
                 "protocolo": "FOLFOX",
                 "intervalo_dias": 14,
